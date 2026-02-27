@@ -155,6 +155,7 @@ class Ball:
         self.owner = None
         self.last_touch_team = -1
         self.last_kicker = None  # Track the player who last kicked the ball
+        self.second_last_touch_team = -1  # Track the team that touched the ball before the last kicker
 
     @property
     def pos(self):
@@ -529,10 +530,10 @@ class FootballEnv(gym.Env):
                 # It's a pass!
                 if closest_player.team == 0:
                     self.match_stats["green_passes"] += 1
-                    self._event_rewards += 1.0  # +1 reward for green team
+                    self._event_rewards += 2.0  # +2 reward for green team pass
                 else:
                     self.match_stats["red_passes"] += 1
-                    self._event_rewards -= 1.0  # -1 penalty for green team
+                    self._event_rewards -= 2.0  # -2 penalty for green team if red passes
 
             # 2. Goalkeeper Save Detection
             # If GK picks up a fast-moving ball last kicked by the opponent
@@ -542,10 +543,10 @@ class FootballEnv(gym.Env):
                 
                 if closest_player.team == 0:
                     self.match_stats["green_saves"] += 1
-                    self._event_rewards += 2.0  # +2 reward for a save
+                    self._event_rewards += 5.0  # +5 reward for a save
                 else:
                     self.match_stats["red_saves"] += 1
-                    self._event_rewards -= 2.0  # -2 penalty if red GK saves our shot
+                    self._event_rewards -= 5.0  # -5 penalty if red GK saves our shot
 
             self.ball.owner = closest_player
             closest_player.has_ball = True
@@ -580,6 +581,7 @@ class FootballEnv(gym.Env):
             self.ball.owner = None
             self.ball.vx = direction[0] * power
             self.ball.vy = direction[1] * power
+            self.ball.second_last_touch_team = self.ball.last_touch_team
             self.ball.last_touch_team = player.team
             self.ball.last_kicker = player
             player.cooldown = 5  # brief cooldown after kicking
@@ -928,11 +930,15 @@ class FootballEnv(gym.Env):
         """Compute reward for the green team."""
         reward = 0.0
 
-        # Goal rewards
+        # Goal and Assist rewards
         if self.green_score > self.prev_green_score:
             reward += 10.0
+            if self.ball.second_last_touch_team == 0:
+                reward += 5.0  # Assist bonus!
         if self.red_score > self.prev_red_score:
             reward -= 10.0
+            if self.ball.second_last_touch_team == 1:
+                reward -= 5.0  # Opponent Assist penalty
 
         # Win/lose bonus
         if self.done:
