@@ -163,17 +163,18 @@ class LivePlotCallback(BaseCallback):
         self.fig, self.axes = plt.subplots(3, 1, figsize=(10, 9))
         self.fig.suptitle('⚽ Football RL Training — Live Dashboard',
                           fontsize=14, fontweight='bold', y=0.98)
-        self.fig.set_facecolor('#1a1a2e')
+        self.fig.set_facecolor('#f4f6f9')
 
         colors = {
-            'bg': '#1a1a2e',
-            'panel': '#16213e',
-            'green': '#2ecc71',
-            'red': '#e74c3c',
-            'yellow': '#f1c40f',
-            'blue': '#3498db',
-            'white': '#ecf0f1',
-            'gray': '#95a5a6',
+            'bg': '#f4f6f9',
+            'panel': '#ffffff',
+            'green': '#27ae60',
+            'red': '#c0392b',
+            'yellow': '#e67e22',
+            'blue': '#2980b9',
+            'text': '#2c3e50',
+            'gray': '#7f8c8d',
+            'grid': '#ecf0f1',
         }
         self.colors = colors
 
@@ -184,23 +185,23 @@ class LivePlotCallback(BaseCallback):
             ax.spines['left'].set_color(colors['gray'])
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
-            ax.grid(True, alpha=0.15, color=colors['white'])
+            ax.grid(True, alpha=0.8, color=colors['grid'])
 
         # Subplot 1: Episode Reward
-        self.axes[0].set_title('Episode Reward (Convergence)', color=colors['white'],
+        self.axes[0].set_title('Episode Reward (Convergence)', color=colors['text'],
                                fontsize=11, fontweight='bold', pad=8)
         self.axes[0].set_xlabel('Episode', color=colors['gray'], fontsize=9)
         self.axes[0].set_ylabel('Reward', color=colors['gray'], fontsize=9)
 
         # Subplot 2: Win Rate
-        self.axes[1].set_title('Win Rate Over Time', color=colors['white'],
+        self.axes[1].set_title('Win Rate Over Time', color=colors['text'],
                                fontsize=11, fontweight='bold', pad=8)
         self.axes[1].set_xlabel('Episode', color=colors['gray'], fontsize=9)
         self.axes[1].set_ylabel('Win Rate %', color=colors['gray'], fontsize=9)
         self.axes[1].set_ylim(-5, 105)
 
         # Subplot 3: Goals
-        self.axes[2].set_title('Goals Scored vs Conceded', color=colors['white'],
+        self.axes[2].set_title('Goals Scored vs Conceded', color=colors['text'],
                                fontsize=11, fontweight='bold', pad=8)
         self.axes[2].set_xlabel('Episode', color=colors['gray'], fontsize=9)
         self.axes[2].set_ylabel('Goals', color=colors['gray'], fontsize=9)
@@ -263,13 +264,13 @@ class LivePlotCallback(BaseCallback):
         ax1 = self.axes[0]
         ax1.clear()
         ax1.set_facecolor(c['panel'])
-        ax1.grid(True, alpha=0.15, color=c['white'])
-        ax1.set_title('Episode Reward (Convergence)', color=c['white'],
+        ax1.grid(True, alpha=0.8, color=c['grid'])
+        ax1.set_title('Episode Reward (Convergence)', color=c['text'],
                        fontsize=11, fontweight='bold', pad=8)
 
         # Raw rewards (translucent)
         ax1.plot(episodes_x, self.episode_rewards,
-                 color=c['blue'], alpha=0.25, linewidth=0.8, label='Raw')
+                 color=c['blue'], alpha=0.35, linewidth=1.0, label='Raw')
 
         # Rolling average
         if len(self.episode_rewards) >= self.rolling_window:
@@ -288,7 +289,7 @@ class LivePlotCallback(BaseCallback):
                      linewidth=2.5, label=f'Rolling Avg ({w})')
 
         ax1.legend(loc='upper left', fontsize=8, facecolor=c['panel'],
-                   edgecolor=c['gray'], labelcolor=c['white'])
+                   edgecolor=c['grid'], labelcolor=c['text'])
         ax1.set_xlabel('Episode', color=c['gray'], fontsize=9)
         ax1.set_ylabel('Reward', color=c['gray'], fontsize=9)
         ax1.tick_params(colors=c['gray'], labelcolor=c['gray'])
@@ -297,8 +298,8 @@ class LivePlotCallback(BaseCallback):
         ax2 = self.axes[1]
         ax2.clear()
         ax2.set_facecolor(c['panel'])
-        ax2.grid(True, alpha=0.15, color=c['white'])
-        ax2.set_title('Win Rate Over Time', color=c['white'],
+        ax2.grid(True, alpha=0.8, color=c['grid'])
+        ax2.set_title('Win Rate Over Time', color=c['text'],
                        fontsize=11, fontweight='bold', pad=8)
 
         ax2.fill_between(episodes_x, self.win_rates, alpha=0.3, color=c['green'])
@@ -315,8 +316,8 @@ class LivePlotCallback(BaseCallback):
         stats_text = (f'W:{self.cumulative_wins}  L:{self.cumulative_losses}  '
                       f'D:{self.cumulative_draws}')
         ax2.text(0.98, 0.95, stats_text, transform=ax2.transAxes,
-                 fontsize=9, color=c['white'], ha='right', va='top',
-                 bbox=dict(boxstyle='round,pad=0.3', facecolor=c['bg'], alpha=0.8))
+                 fontsize=9, color=c['text'], ha='right', va='top',
+                 bbox=dict(boxstyle='round,pad=0.3', facecolor=c['bg'], edgecolor=c['grid'], alpha=0.9))
 
         ax2.set_ylim(-5, 105)
         ax2.set_xlabel('Episode', color=c['gray'], fontsize=9)
@@ -327,8 +328,8 @@ class LivePlotCallback(BaseCallback):
         ax3 = self.axes[2]
         ax3.clear()
         ax3.set_facecolor(c['panel'])
-        ax3.grid(True, alpha=0.15, color=c['white'])
-        ax3.set_title('Goals Scored vs Conceded', color=c['white'],
+        ax3.grid(True, alpha=0.8, color=c['grid'])
+        ax3.set_title('Goals Scored vs Conceded', color=c['text'],
                        fontsize=11, fontweight='bold', pad=8)
 
         # Rolling goals average
@@ -356,7 +357,7 @@ class LivePlotCallback(BaseCallback):
                     color=c['red'], alpha=0.4, width=0.4, label='Red (conceded)')
 
         ax3.legend(loc='upper left', fontsize=8, facecolor=c['panel'],
-                   edgecolor=c['gray'], labelcolor=c['white'])
+                   edgecolor=c['grid'], labelcolor=c['text'])
         ax3.set_xlabel('Episode', color=c['gray'], fontsize=9)
         ax3.set_ylabel('Avg Goals', color=c['gray'], fontsize=9)
         ax3.tick_params(colors=c['gray'], labelcolor=c['gray'])
