@@ -1,0 +1,636 @@
+"""
+Football RL Training Script
+============================
+Trains a PPO agent to play football using self-play.
+The agent controls the Green team, and the opponent (Red team)
+uses a periodically updated frozen copy of the agent's policy.
+
+Features:
+  --render       Opens a Pygame window and shows live matches during training
+  --render_every How many training episodes between each visual match (default: 20)
+
+Usage:
+    python train.py --render                        # Train with live visuals!
+    python train.py --render --render_every 10      # Show game every 10 episodes
+    python train.py --timesteps 500000              # Headless training
+    python train.py --timesteps 50000 --log         # With TensorBoard logging
+"""
+
+import argparse
+import os
+import time
+import copy
+import numpy as np
+import matplotlib
+matplotlib.use('TkAgg')  # Use interactive backend
+import matplotlib.pyplot as plt
+from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
+from stable_baselines3.common.vec_env import DummyVecEnv
+from self_play_wrapper import SelfPlayWrapper
+
+
+class SelfPlayCallback(BaseCallback):
+    """
+    Callback to update the opponent's policy periodically during training.
+    Every `update_interval` steps, the opponent gets a copy of the current agent.
+    """
+
+    def __init__(self, env, update_interval=50000, verbose=1):
+        super().__init__(verbose)
+        self.env = env
+        self.update_interval = update_interval
+        self.last_update = 0
+        self.n_updates = 0
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps - self.last_update >= self.update_interval:
+            # Update opponent with current policy
+            if self.verbose:
+                print(f"\n🔄 Self-play update #{self.n_updates + 1} "
+                      f"at step {self.num_timesteps}")
+
+            # Get the underlying environment from DummyVecEnv
+            actual_env = self.env.envs[0]
+
+            # Create a frozen copy of the current policy for the opponent
+            opponent_model = PPO.load(
+                os.path.join("checkpoints", "latest_opponent"),
+                env=None
+            ) if os.path.exists(os.path.join("checkpoints", "latest_opponent.zip")) else None
+
+            # Save current model as opponent
+            self.model.save(os.path.join("checkpoints", "latest_opponent"))
+
+            # Load it as a separate model for the opponent
+            try:
+                opponent = PPO.load(os.path.join("checkpoints", "latest_opponent"))
+                actual_env.set_opponent_policy(opponent)
+                if self.verbose:
+                    print(f"   ✅ Opponent policy updated successfully")
+            except Exception as e:
+                if self.verbose:
+                    print(f"   ⚠️  Failed to update opponent: {e}")
+
+            self.last_update = self.num_timesteps
+            self.n_updates += 1
+
+        return True
+
+
+class RewardLoggerCallback(BaseCallback):
+    """Logs episode rewards and match outcomes."""
+
+    def __init__(self, verbose=1):
+        super().__init__(verbose)
+        self.episode_rewards = []
+        self.wins = 0
+        self.losses = 0
+        self.draws = 0
+        self.episodes = 0
+
+    def _on_step(self) -> bool:
+        # Check for episode end
+        infos = self.locals.get("infos", [])
+        for info in infos:
+            if "green_score" in info and self.locals.get("dones", [False])[0]:
+                self.episodes += 1
+                green = info["green_score"]
+                red = info["red_score"]
+
+                if green >= 2:
+                    self.wins += 1
+                    result = "🏆 WIN"
+                elif red >= 2:
+                    self.losses += 1
+                    result = "❌ LOSS"
+                else:
+                    self.draws += 1
+                    result = "🤝 DRAW"
+
+                if self.episodes % 50 == 0 and self.verbose:
+                    total = max(self.episodes, 1)
+                    print(f"\n📊 Episode {self.episodes}: {result} "
+                          f"(Score: {green}-{red})")
+                    print(f"   Win rate: {self.wins/total*100:.1f}% | "
+                          f"Wins: {self.wins} | Losses: {self.losses} | "
+                          f"Draws: {self.draws}")
+
+        return True
+
+
+class LivePlotCallback(BaseCallback):
+    """
+    Real-time matplotlib plots that update during training.
+    Opens a window with 3 subplots:
+      1. Episode Reward (with rolling average) — shows convergence
+      2. Win Rate % over time — shows learning progress
+      3. Goals Scored vs Conceded — shows offensive/defensive ability
+    """
+
+    def __init__(self, plot_every=5, rolling_window=50, verbose=1):
+        super().__init__(verbose)
+        self.plot_every = plot_every  # Update plots every N episodes
+        self.rolling_window = rolling_window
+        self.episodes = 0
+
+        # Data storage
+        self.episode_rewards = []
+        self.episode_lengths = []
+        self.win_rates = []
+        self.green_goals_history = []
+        self.red_goals_history = []
+        self.cumulative_wins = 0
+        self.cumulative_losses = 0
+        self.cumulative_draws = 0
+
+        # Current episode tracking
+        self._current_reward = 0.0
+
+        # Plot setup
+        self.fig = None
+        self.axes = None
+        self._initialized = False
+
+    def _init_plot(self):
+        """Initialize the matplotlib figure with 3 subplots."""
+        plt.ion()  # Interactive mode
+        self.fig, self.axes = plt.subplots(3, 1, figsize=(10, 9))
+        self.fig.suptitle('⚽ Football RL Training — Live Dashboard',
+                          fontsize=14, fontweight='bold', y=0.98)
+        self.fig.set_facecolor('#1a1a2e')
+
+        colors = {
+            'bg': '#1a1a2e',
+            'panel': '#16213e',
+            'green': '#2ecc71',
+            'red': '#e74c3c',
+            'yellow': '#f1c40f',
+            'blue': '#3498db',
+            'white': '#ecf0f1',
+            'gray': '#95a5a6',
+        }
+        self.colors = colors
+
+        for ax in self.axes:
+            ax.set_facecolor(colors['panel'])
+            ax.tick_params(colors=colors['gray'], labelcolor=colors['gray'])
+            ax.spines['bottom'].set_color(colors['gray'])
+            ax.spines['left'].set_color(colors['gray'])
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.grid(True, alpha=0.15, color=colors['white'])
+
+        # Subplot 1: Episode Reward
+        self.axes[0].set_title('Episode Reward (Convergence)', color=colors['white'],
+                               fontsize=11, fontweight='bold', pad=8)
+        self.axes[0].set_xlabel('Episode', color=colors['gray'], fontsize=9)
+        self.axes[0].set_ylabel('Reward', color=colors['gray'], fontsize=9)
+
+        # Subplot 2: Win Rate
+        self.axes[1].set_title('Win Rate Over Time', color=colors['white'],
+                               fontsize=11, fontweight='bold', pad=8)
+        self.axes[1].set_xlabel('Episode', color=colors['gray'], fontsize=9)
+        self.axes[1].set_ylabel('Win Rate %', color=colors['gray'], fontsize=9)
+        self.axes[1].set_ylim(-5, 105)
+
+        # Subplot 3: Goals
+        self.axes[2].set_title('Goals Scored vs Conceded', color=colors['white'],
+                               fontsize=11, fontweight='bold', pad=8)
+        self.axes[2].set_xlabel('Episode', color=colors['gray'], fontsize=9)
+        self.axes[2].set_ylabel('Goals', color=colors['gray'], fontsize=9)
+
+        self.fig.tight_layout(rect=[0, 0, 1, 0.95])
+        plt.show(block=False)
+        plt.pause(0.01)
+        self._initialized = True
+
+    def _on_step(self) -> bool:
+        # Accumulate reward
+        rewards = self.locals.get('rewards', [0])
+        self._current_reward += rewards[0]
+
+        # Check for episode end
+        infos = self.locals.get('infos', [])
+        dones = self.locals.get('dones', [False])
+
+        for i, info in enumerate(infos):
+            if dones[i] and 'green_score' in info:
+                self.episodes += 1
+                green = info['green_score']
+                red = info['red_score']
+
+                # Store data
+                self.episode_rewards.append(self._current_reward)
+                self.green_goals_history.append(green)
+                self.red_goals_history.append(red)
+
+                # Track wins
+                if green >= 2:
+                    self.cumulative_wins += 1
+                elif red >= 2:
+                    self.cumulative_losses += 1
+                else:
+                    self.cumulative_draws += 1
+
+                total = self.cumulative_wins + self.cumulative_losses + self.cumulative_draws
+                win_rate = (self.cumulative_wins / total * 100) if total > 0 else 0
+                self.win_rates.append(win_rate)
+
+                # Reset episode reward
+                self._current_reward = 0.0
+
+                # Update plots periodically
+                if self.episodes % self.plot_every == 0:
+                    self._update_plots()
+
+        return True
+
+    def _update_plots(self):
+        """Redraw all 3 plots with latest data."""
+        if not self._initialized:
+            self._init_plot()
+
+        c = self.colors
+        episodes_x = list(range(1, len(self.episode_rewards) + 1))
+
+        # --- Plot 1: Episode Reward ---
+        ax1 = self.axes[0]
+        ax1.clear()
+        ax1.set_facecolor(c['panel'])
+        ax1.grid(True, alpha=0.15, color=c['white'])
+        ax1.set_title('Episode Reward (Convergence)', color=c['white'],
+                       fontsize=11, fontweight='bold', pad=8)
+
+        # Raw rewards (translucent)
+        ax1.plot(episodes_x, self.episode_rewards,
+                 color=c['blue'], alpha=0.25, linewidth=0.8, label='Raw')
+
+        # Rolling average
+        if len(self.episode_rewards) >= self.rolling_window:
+            rolling = np.convolve(self.episode_rewards,
+                                  np.ones(self.rolling_window) / self.rolling_window,
+                                  mode='valid')
+            rolling_x = list(range(self.rolling_window, len(self.episode_rewards) + 1))
+            ax1.plot(rolling_x, rolling, color=c['yellow'],
+                     linewidth=2.5, label=f'Rolling Avg ({self.rolling_window})')
+        elif len(self.episode_rewards) >= 5:
+            w = min(len(self.episode_rewards), 10)
+            rolling = np.convolve(self.episode_rewards,
+                                  np.ones(w) / w, mode='valid')
+            rolling_x = list(range(w, len(self.episode_rewards) + 1))
+            ax1.plot(rolling_x, rolling, color=c['yellow'],
+                     linewidth=2.5, label=f'Rolling Avg ({w})')
+
+        ax1.legend(loc='upper left', fontsize=8, facecolor=c['panel'],
+                   edgecolor=c['gray'], labelcolor=c['white'])
+        ax1.set_xlabel('Episode', color=c['gray'], fontsize=9)
+        ax1.set_ylabel('Reward', color=c['gray'], fontsize=9)
+        ax1.tick_params(colors=c['gray'], labelcolor=c['gray'])
+
+        # --- Plot 2: Win Rate ---
+        ax2 = self.axes[1]
+        ax2.clear()
+        ax2.set_facecolor(c['panel'])
+        ax2.grid(True, alpha=0.15, color=c['white'])
+        ax2.set_title('Win Rate Over Time', color=c['white'],
+                       fontsize=11, fontweight='bold', pad=8)
+
+        ax2.fill_between(episodes_x, self.win_rates, alpha=0.3, color=c['green'])
+        ax2.plot(episodes_x, self.win_rates, color=c['green'],
+                 linewidth=2, label='Win Rate')
+
+        # 50% reference line
+        ax2.axhline(y=50, color=c['gray'], linestyle='--', alpha=0.5, linewidth=1)
+        ax2.text(len(episodes_x) * 0.02, 52, '50%', color=c['gray'],
+                 fontsize=8, alpha=0.7)
+
+        # Current stats annotation
+        total = self.cumulative_wins + self.cumulative_losses + self.cumulative_draws
+        stats_text = (f'W:{self.cumulative_wins}  L:{self.cumulative_losses}  '
+                      f'D:{self.cumulative_draws}')
+        ax2.text(0.98, 0.95, stats_text, transform=ax2.transAxes,
+                 fontsize=9, color=c['white'], ha='right', va='top',
+                 bbox=dict(boxstyle='round,pad=0.3', facecolor=c['bg'], alpha=0.8))
+
+        ax2.set_ylim(-5, 105)
+        ax2.set_xlabel('Episode', color=c['gray'], fontsize=9)
+        ax2.set_ylabel('Win Rate %', color=c['gray'], fontsize=9)
+        ax2.tick_params(colors=c['gray'], labelcolor=c['gray'])
+
+        # --- Plot 3: Goals ---
+        ax3 = self.axes[2]
+        ax3.clear()
+        ax3.set_facecolor(c['panel'])
+        ax3.grid(True, alpha=0.15, color=c['white'])
+        ax3.set_title('Goals Scored vs Conceded', color=c['white'],
+                       fontsize=11, fontweight='bold', pad=8)
+
+        # Rolling goals average
+        w = min(max(len(self.green_goals_history) // 10, 5), 50)
+        if len(self.green_goals_history) >= w:
+            green_rolling = np.convolve(self.green_goals_history,
+                                         np.ones(w) / w, mode='valid')
+            red_rolling = np.convolve(self.red_goals_history,
+                                       np.ones(w) / w, mode='valid')
+            roll_x = list(range(w, len(self.green_goals_history) + 1))
+            ax3.plot(roll_x, green_rolling, color=c['green'],
+                     linewidth=2.5, label='Green (scored)', zorder=3)
+            ax3.plot(roll_x, red_rolling, color=c['red'],
+                     linewidth=2.5, label='Red (conceded)', zorder=3)
+            ax3.fill_between(roll_x, green_rolling, red_rolling,
+                             where=[g > r for g, r in zip(green_rolling, red_rolling)],
+                             alpha=0.15, color=c['green'], interpolate=True)
+            ax3.fill_between(roll_x, green_rolling, red_rolling,
+                             where=[g <= r for g, r in zip(green_rolling, red_rolling)],
+                             alpha=0.15, color=c['red'], interpolate=True)
+        else:
+            ax3.bar(episodes_x, self.green_goals_history,
+                    color=c['green'], alpha=0.6, width=0.8, label='Green (scored)')
+            ax3.bar(episodes_x, self.red_goals_history,
+                    color=c['red'], alpha=0.4, width=0.4, label='Red (conceded)')
+
+        ax3.legend(loc='upper left', fontsize=8, facecolor=c['panel'],
+                   edgecolor=c['gray'], labelcolor=c['white'])
+        ax3.set_xlabel('Episode', color=c['gray'], fontsize=9)
+        ax3.set_ylabel('Avg Goals', color=c['gray'], fontsize=9)
+        ax3.tick_params(colors=c['gray'], labelcolor=c['gray'])
+
+        # Refresh
+        self.fig.tight_layout(rect=[0, 0, 1, 0.95])
+        try:
+            self.fig.canvas.draw_idle()
+            self.fig.canvas.flush_events()
+            plt.pause(0.01)
+        except Exception:
+            pass
+
+    def _on_training_end(self):
+        """Save final plot and keep window open."""
+        self._update_plots()
+        try:
+            self.fig.savefig('training_plots.png', dpi=150,
+                             facecolor=self.colors['bg'],
+                             bbox_inches='tight')
+            if self.verbose:
+                print(f"\n📈 Training plots saved to: training_plots.png")
+        except Exception:
+            pass
+        plt.ioff()
+        plt.show(block=False)
+
+
+class LiveVisualizationCallback(BaseCallback):
+    """
+    Periodically pauses training to play a full visual match in a Pygame window.
+    This lets you WATCH the agent learn in real-time while training continues.
+
+    Every `render_every` training episodes, a separate rendered environment is
+    created and one full match is played using the current policy, so you can
+    see how the agent is improving.
+    """
+
+    def __init__(self, render_every=20, speed=1.5, verbose=1):
+        super().__init__(verbose)
+        self.render_every = render_every
+        self.speed = speed
+        self.episodes_seen = 0
+        self.vis_env = None  # Created lazily
+
+    def _on_step(self) -> bool:
+        # Count episodes
+        infos = self.locals.get("infos", [])
+        for info in infos:
+            if "green_score" in info and self.locals.get("dones", [False])[0]:
+                self.episodes_seen += 1
+
+                if self.episodes_seen % self.render_every == 0:
+                    self._play_visual_match()
+
+        return True
+
+    def _play_visual_match(self):
+        """Play one full match with Pygame rendering using the current policy."""
+        import pygame
+
+        if self.verbose:
+            print(f"\n🎮 Playing visual match #{self.episodes_seen // self.render_every}  "
+                  f"(after {self.episodes_seen} training episodes, "
+                  f"{self.num_timesteps:,} steps)")
+
+        # Create a rendered environment (separate from training env)
+        if self.vis_env is None:
+            self.vis_env = SelfPlayWrapper(render_mode="human")
+
+        # Copy the current opponent policy from the training env
+        training_env = self.model.get_env().envs[0]
+        if hasattr(training_env, 'opponent_policy'):
+            self.vis_env.set_opponent_policy(training_env.opponent_policy)
+
+        obs, info = self.vis_env.reset()
+        done = False
+        total_reward = 0
+        match_steps = 0
+
+        while not done:
+            # Use the CURRENT agent policy (being trained) for green team
+            action, _ = self.model.predict(obs, deterministic=False)
+            obs, reward, done, truncated, info = self.vis_env.step(action)
+            total_reward += reward
+            match_steps += 1
+            done = done or truncated
+
+            # Handle Pygame events (prevent "not responding")
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    if self.verbose:
+                        print("   ⏭️  Visual match skipped by user")
+                    self.vis_env.close()
+                    self.vis_env = None
+                    return
+
+            # Control playback speed
+            time.sleep(max(0, (1.0 / 30) / self.speed))
+
+        green_score = info.get("green_score", 0)
+        red_score = info.get("red_score", 0)
+        if green_score > red_score:
+            result = "🟢 GREEN WINS!"
+        elif red_score > green_score:
+            result = "🔴 RED WINS!"
+        else:
+            result = "🤝 DRAW"
+
+        if self.verbose:
+            print(f"   {result} | Score: {green_score}-{red_score} | "
+                  f"Steps: {match_steps} | Reward: {total_reward:.1f}")
+            print(f"   ▶️  Training continues...\n")
+
+    def _on_training_end(self):
+        """Clean up visualization environment."""
+        if self.vis_env is not None:
+            self.vis_env.close()
+            self.vis_env = None
+
+
+def make_env(render_mode=None):
+    """Create a wrapped football environment."""
+    def _init():
+        env = SelfPlayWrapper(render_mode=render_mode)
+        return env
+    return _init
+
+
+def train(args):
+    """Main training function."""
+    print("=" * 60)
+    print("⚽ Football Simulator — Reinforcement Learning Training")
+    print("=" * 60)
+    print(f"  Total timesteps:    {args.timesteps:,}")
+    print(f"  Self-play update:   every {args.selfplay_interval:,} steps")
+    print(f"  Learning rate:      {args.lr}")
+    print(f"  Batch size:         {args.batch_size}")
+    print(f"  Live visualization: {'Every ' + str(args.render_every) + ' episodes' if args.render else 'Off'}")
+    print(f"  Live plots:         {'On (3 charts)' if args.plots else 'Off'}")
+    print(f"  TensorBoard log:    {'Yes' if args.log else 'No'}")
+    print("=" * 60)
+
+    if args.render:
+        print("\n🎮 Live visualization is ON! A Pygame window will open")
+        print(f"   and show a match every {args.render_every} training episodes.")
+        print("   You can watch the agent learn in real-time!\n")
+
+    # Create directories
+    os.makedirs("checkpoints", exist_ok=True)
+    os.makedirs("logs", exist_ok=True)
+
+    # Create vectorized environment (training env is always headless for speed)
+    env = DummyVecEnv([make_env()])
+
+    # PPO hyperparameters tuned for multi-agent game
+    model = PPO(
+        "MlpPolicy",
+        env,
+        learning_rate=args.lr,
+        n_steps=args.n_steps,
+        batch_size=args.batch_size,
+        n_epochs=args.n_epochs,
+        gamma=args.gamma,
+        gae_lambda=0.95,
+        clip_range=0.2,
+        ent_coef=0.01,  # Entropy for exploration
+        vf_coef=0.5,
+        max_grad_norm=0.5,
+        policy_kwargs=dict(
+            net_arch=dict(pi=[256, 256, 128], vf=[256, 256, 128])
+        ),
+        tensorboard_log="logs" if args.log else None,
+        verbose=1,
+        seed=args.seed,
+    )
+
+    print(f"\n🏗️  Model architecture:")
+    print(f"   Policy network:  [256, 256, 128]")
+    print(f"   Value network:   [256, 256, 128]")
+    print(f"   Observation dim: {env.observation_space.shape}")
+    print(f"   Action dim:      {env.action_space.shape}\n")
+
+    # Callbacks
+    callbacks = [
+        SelfPlayCallback(env, update_interval=args.selfplay_interval),
+        RewardLoggerCallback(verbose=1),
+        CheckpointCallback(
+            save_freq=args.checkpoint_freq,
+            save_path="checkpoints",
+            name_prefix="football_ppo"
+        ),
+    ]
+
+    # Add live plots callback (always on by default, use --no-plots to disable)
+    if args.plots:
+        callbacks.append(
+            LivePlotCallback(
+                plot_every=args.plot_every,
+                rolling_window=50,
+                verbose=1,
+            )
+        )
+
+    # Add live visualization callback if --render is enabled
+    if args.render:
+        callbacks.append(
+            LiveVisualizationCallback(
+                render_every=args.render_every,
+                speed=args.render_speed,
+                verbose=1,
+            )
+        )
+
+    # Train!
+    print("🚀 Starting training...\n")
+    try:
+        model.learn(
+            total_timesteps=args.timesteps,
+            callback=callbacks,
+            progress_bar=True,
+        )
+    except KeyboardInterrupt:
+        print("\n\n⏸️  Training interrupted by user.")
+
+    # Save final model
+    final_path = os.path.join("checkpoints", "football_ppo_final")
+    model.save(final_path)
+    print(f"\n💾 Final model saved to: {final_path}")
+
+    # Print final stats
+    reward_callback = callbacks[1]
+    total = max(reward_callback.episodes, 1)
+    print(f"\n{'=' * 60}")
+    print(f"📊 Training Complete!")
+    print(f"   Episodes:   {reward_callback.episodes}")
+    print(f"   Wins:       {reward_callback.wins} ({reward_callback.wins/total*100:.1f}%)")
+    print(f"   Losses:     {reward_callback.losses} ({reward_callback.losses/total*100:.1f}%)")
+    print(f"   Draws:      {reward_callback.draws} ({reward_callback.draws/total*100:.1f}%)")
+    print(f"{'=' * 60}")
+
+    env.close()
+    return model
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Train Football RL Agent")
+    parser.add_argument("--timesteps", type=int, default=2_000_000,
+                        help="Total training timesteps (default: 2M)")
+    parser.add_argument("--lr", type=float, default=3e-4,
+                        help="Learning rate (default: 3e-4)")
+    parser.add_argument("--batch_size", type=int, default=256,
+                        help="Batch size (default: 256)")
+    parser.add_argument("--n_steps", type=int, default=2048,
+                        help="Steps per rollout (default: 2048)")
+    parser.add_argument("--n_epochs", type=int, default=10,
+                        help="Epochs per update (default: 10)")
+    parser.add_argument("--gamma", type=float, default=0.99,
+                        help="Discount factor (default: 0.99)")
+    parser.add_argument("--selfplay_interval", type=int, default=50000,
+                        help="Opponent update interval (default: 50K)")
+    parser.add_argument("--checkpoint_freq", type=int, default=50000,
+                        help="Checkpoint frequency (default: 50K)")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed (default: 42)")
+    parser.add_argument("--log", action="store_true",
+                        help="Enable TensorBoard logging")
+    parser.add_argument("--render", action="store_true",
+                        help="Enable live visualization during training")
+    parser.add_argument("--render_every", type=int, default=20,
+                        help="Show a visual match every N training episodes (default: 20)")
+    parser.add_argument("--render_speed", type=float, default=1.5,
+                        help="Playback speed for visual matches (default: 1.5x)")
+    parser.add_argument("--plots", action="store_true", default=True,
+                        help="Enable live training plots (default: on)")
+    parser.add_argument("--no-plots", dest="plots", action="store_false",
+                        help="Disable live training plots")
+    parser.add_argument("--plot_every", type=int, default=5,
+                        help="Update plots every N episodes (default: 5)")
+    args = parser.parse_args()
+
+    train(args)
