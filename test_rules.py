@@ -189,8 +189,8 @@ def test_timeout_win_condition():
 
     assert truncated, "Game should be truncated at MAX_STEPS"
     assert done, "Game should be done at MAX_STEPS"
-    # Reward should be positive (and large) since green was leading 1-0
-    assert reward > 50, f"Green should get the win bonus for leading at timeout, got {reward}"
+    # Reward should be positive (and large) since green was leading 1-0. Win bonus is now +20.
+    assert reward > 10, f"Green should get the win bonus for leading at timeout, got {reward}"
     
     print("✅ Timeout win condition (most goals): PASSED")
     env.close()
