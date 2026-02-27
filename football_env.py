@@ -404,6 +404,7 @@ class FootballEnv(gym.Env):
             self.done = True
 
         # Compute reward for green team
+        self.truncated = truncated
         reward = self._compute_reward()
         
         # Add discrete event rewards and reset
@@ -935,10 +936,17 @@ class FootballEnv(gym.Env):
 
         # Win/lose bonus
         if self.done:
+            # Reached goal limit
             if self.green_score >= GOALS_TO_WIN:
                 reward += 100.0
             elif self.red_score >= GOALS_TO_WIN:
                 reward -= 100.0
+            # Time ran out, check who has more goals
+            elif getattr(self, "truncated", False):
+                if self.green_score > self.red_score:
+                    reward += 100.0  # Green wins on time
+                elif self.red_score > self.green_score:
+                    reward -= 100.0  # Red wins on time
 
         # Ball progression toward opponent's goal (right side for green)
         ball_progress = (self.ball.x - self.prev_ball_x) / PITCH_WIDTH

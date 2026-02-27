@@ -171,6 +171,31 @@ def test_win_condition():
     env.close()
 
 
+def test_timeout_win_condition():
+    """Test that match ends when time runs out and the team with more goals gets the win bonus."""
+    from football_env import MAX_STEPS
+
+    env = FootballEnv()
+    obs, info = env.reset()
+
+    # Simulate green leading 1-0 at the very end of the game
+    env.green_score = 1
+    env.prev_green_score = 1
+    env.steps = MAX_STEPS - 1
+
+    action = env.action_space.sample()
+    env.set_red_actions(np.array([0, 0, 0, 0, 0, 0]))
+    obs, reward, done, truncated, info = env.step(action)
+
+    assert truncated, "Game should be truncated at MAX_STEPS"
+    assert done, "Game should be done at MAX_STEPS"
+    # Reward should be positive (and large) since green was leading 1-0
+    assert reward > 50, f"Green should get the win bonus for leading at timeout, got {reward}"
+    
+    print("✅ Timeout win condition (most goals): PASSED")
+    env.close()
+
+
 def test_full_episode():
     """Test a full episode runs without crashing."""
     env = FootballEnv()
@@ -244,6 +269,7 @@ if __name__ == "__main__":
         test_corner_kick,
         test_goalkeeper_restriction,
         test_win_condition,
+        test_timeout_win_condition,
         test_full_episode,
         test_penalty_box_detection,
         test_set_piece_execution,
