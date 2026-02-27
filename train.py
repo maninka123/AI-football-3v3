@@ -20,6 +20,8 @@ import argparse
 import os
 import time
 import copy
+import json
+import glob
 import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')  # Use interactive backend
@@ -28,6 +30,9 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.vec_env import DummyVecEnv
 from self_play_wrapper import SelfPlayWrapper
+
+# Path to save/load training state
+TRAINING_STATE_FILE = os.path.join("checkpoints", "training_state.json")
 
 
 class SelfPlayCallback(BaseCallback):
@@ -481,12 +486,104 @@ def make_env(render_mode=None):
     return _init
 
 
+def find_latest_checkpoint():
+    """Find the latest checkpoint file in the checkpoints directory."""
+    # Look for the final model first
+    final_path = os.path.join("checkpoints", "football_ppo_final.zip")
+    if os.path.exists(final_path):
+        return final_path
+
+    # Find numbered checkpoints and pick the latest
+    pattern = os.path.join("checkpoints", "football_ppo_*_steps.zip")
+    checkpoints = glob.glob(pattern)
+    if not checkpoints:
+        return None
+
+    # Extract step numbers and find max
+    def get_steps(path):
+        basename = os.path.basename(path)
+        try:
+            parts = basename.replace(".zip", "").split("_")
+            return int(parts[-2])  # e.g. football_ppo_50000_steps.zip
+        except (ValueError, IndexError):
+            return 0
+
+    checkpoints.sort(key=get_steps)
+    return checkpoints[-1]
+
+
+def save_training_state(timesteps_done, stats):
+    """Save training progress to JSON so we can resume later."""
+    state = {
+        "timesteps_done": timesteps_done,
+        "episodes": stats.get("episodes", 0),
+        "wins": stats.get("wins", 0),
+        "losses": stats.get("losses", 0),
+        "draws": stats.get("draws", 0),
+    }
+    os.makedirs("checkpoints", exist_ok=True)
+    with open(TRAINING_STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2)
+    return state
+
+
+def load_training_state():
+    """Load previous training progress."""
+    if os.path.exists(TRAINING_STATE_FILE):
+        with open(TRAINING_STATE_FILE, "r") as f:
+            return json.load(f)
+    return None
+
+
 def train(args):
-    """Main training function."""
+    """Main training function with resume support."""
     print("=" * 60)
     print("⚽ Football Simulator — Reinforcement Learning Training")
     print("=" * 60)
-    print(f"  Total timesteps:    {args.timesteps:,}")
+
+    # Create directories
+    os.makedirs("checkpoints", exist_ok=True)
+    os.makedirs("logs", exist_ok=True)
+
+    # ---- RESUME LOGIC ----
+    resumed = False
+    prev_timesteps = 0
+    prev_state = None
+
+    if args.resume:
+        checkpoint_path = find_latest_checkpoint()
+        prev_state = load_training_state()
+
+        if checkpoint_path and prev_state:
+            prev_timesteps = prev_state["timesteps_done"]
+            remaining = args.timesteps - prev_timesteps
+
+            if remaining <= 0:
+                print(f"\n⚠️  Already trained {prev_timesteps:,} steps, "
+                      f"which meets your target of {args.timesteps:,}.")
+                print(f"   To train more, use a higher --timesteps value.")
+                print(f"   Example: python train.py --resume --timesteps {prev_timesteps + 500000}")
+                return None
+
+            print(f"\n🔄 RESUMING from checkpoint: {os.path.basename(checkpoint_path)}")
+            print(f"   Previous progress: {prev_timesteps:,} steps done")
+            print(f"   Previous stats:    W:{prev_state['wins']} L:{prev_state['losses']} D:{prev_state['draws']}")
+            print(f"   Target total:      {args.timesteps:,} steps")
+            print(f"   Remaining:         {remaining:,} steps")
+            resumed = True
+        elif checkpoint_path:
+            print(f"\n🔄 Found checkpoint: {os.path.basename(checkpoint_path)}")
+            print(f"   (No training state file — starting fresh from this model)")
+            resumed = True
+        else:
+            print(f"\n⚠️  No checkpoint found. Starting fresh training.")
+            args.resume = False
+
+    # Print config
+    print(f"\n  Total timesteps:    {args.timesteps:,}")
+    if resumed:
+        print(f"  Already completed:  {prev_timesteps:,}")
+        print(f"  Remaining:          {args.timesteps - prev_timesteps:,}")
     print(f"  Self-play update:   every {args.selfplay_interval:,} steps")
     print(f"  Learning rate:      {args.lr}")
     print(f"  Batch size:         {args.batch_size}")
@@ -500,34 +597,42 @@ def train(args):
         print(f"   and show a match every {args.render_every} training episodes.")
         print("   You can watch the agent learn in real-time!\n")
 
-    # Create directories
-    os.makedirs("checkpoints", exist_ok=True)
-    os.makedirs("logs", exist_ok=True)
-
     # Create vectorized environment (training env is always headless for speed)
     env = DummyVecEnv([make_env()])
 
-    # PPO hyperparameters tuned for multi-agent game
-    model = PPO(
-        "MlpPolicy",
-        env,
-        learning_rate=args.lr,
-        n_steps=args.n_steps,
-        batch_size=args.batch_size,
-        n_epochs=args.n_epochs,
-        gamma=args.gamma,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        ent_coef=0.01,  # Entropy for exploration
-        vf_coef=0.5,
-        max_grad_norm=0.5,
-        policy_kwargs=dict(
-            net_arch=dict(pi=[256, 256, 128], vf=[256, 256, 128])
-        ),
-        tensorboard_log="logs" if args.log else None,
-        verbose=1,
-        seed=args.seed,
-    )
+    # ---- LOAD OR CREATE MODEL ----
+    if resumed and checkpoint_path:
+        print(f"\n📂 Loading model from: {os.path.basename(checkpoint_path)}")
+        model = PPO.load(
+            checkpoint_path.replace(".zip", ""),
+            env=env,
+            tensorboard_log="logs" if args.log else None,
+        )
+        # Update learning rate if changed
+        model.learning_rate = args.lr
+        print(f"   ✅ Model loaded successfully!")
+    else:
+        # Create fresh PPO model
+        model = PPO(
+            "MlpPolicy",
+            env,
+            learning_rate=args.lr,
+            n_steps=args.n_steps,
+            batch_size=args.batch_size,
+            n_epochs=args.n_epochs,
+            gamma=args.gamma,
+            gae_lambda=0.95,
+            clip_range=0.2,
+            ent_coef=0.01,
+            vf_coef=0.5,
+            max_grad_norm=0.5,
+            policy_kwargs=dict(
+                net_arch=dict(pi=[256, 256, 128], vf=[256, 256, 128])
+            ),
+            tensorboard_log="logs" if args.log else None,
+            verbose=1,
+            seed=args.seed,
+        )
 
     print(f"\n🏗️  Model architecture:")
     print(f"   Policy network:  [256, 256, 128]")
@@ -536,9 +641,17 @@ def train(args):
     print(f"   Action dim:      {env.action_space.shape}\n")
 
     # Callbacks
+    reward_callback = RewardLoggerCallback(verbose=1)
+    # Restore previous stats if resuming
+    if prev_state:
+        reward_callback.wins = prev_state.get("wins", 0)
+        reward_callback.losses = prev_state.get("losses", 0)
+        reward_callback.draws = prev_state.get("draws", 0)
+        reward_callback.episodes = prev_state.get("episodes", 0)
+
     callbacks = [
         SelfPlayCallback(env, update_interval=args.selfplay_interval),
-        RewardLoggerCallback(verbose=1),
+        reward_callback,
         CheckpointCallback(
             save_freq=args.checkpoint_freq,
             save_path="checkpoints",
@@ -546,7 +659,7 @@ def train(args):
         ),
     ]
 
-    # Add live plots callback (always on by default, use --no-plots to disable)
+    # Add live plots callback
     if args.plots:
         callbacks.append(
             LivePlotCallback(
@@ -566,27 +679,44 @@ def train(args):
             )
         )
 
+    # Calculate remaining timesteps
+    train_timesteps = args.timesteps - prev_timesteps
+
     # Train!
-    print("🚀 Starting training...\n")
+    print(f"🚀 {'Resuming' if resumed else 'Starting'} training "
+          f"({train_timesteps:,} steps)...\n")
     try:
         model.learn(
-            total_timesteps=args.timesteps,
+            total_timesteps=train_timesteps,
             callback=callbacks,
             progress_bar=True,
+            reset_num_timesteps=not resumed,  # Don't reset step counter if resuming
         )
     except KeyboardInterrupt:
         print("\n\n⏸️  Training interrupted by user.")
+        print("   Saving checkpoint so you can resume later...")
 
     # Save final model
     final_path = os.path.join("checkpoints", "football_ppo_final")
     model.save(final_path)
     print(f"\n💾 Final model saved to: {final_path}")
 
+    # Save training state for resume
+    total_timesteps_done = prev_timesteps + model.num_timesteps
+    save_training_state(total_timesteps_done, {
+        "episodes": reward_callback.episodes,
+        "wins": reward_callback.wins,
+        "losses": reward_callback.losses,
+        "draws": reward_callback.draws,
+    })
+    print(f"📋 Training state saved ({total_timesteps_done:,} total steps)")
+    print(f"   Resume anytime with: python train.py --resume --timesteps <TARGET>")
+
     # Print final stats
-    reward_callback = callbacks[1]
     total = max(reward_callback.episodes, 1)
     print(f"\n{'=' * 60}")
-    print(f"📊 Training Complete!")
+    print(f"📊 Training {'Complete' if model.num_timesteps >= train_timesteps else 'Paused'}!")
+    print(f"   Total steps: {total_timesteps_done:,}")
     print(f"   Episodes:   {reward_callback.episodes}")
     print(f"   Wins:       {reward_callback.wins} ({reward_callback.wins/total*100:.1f}%)")
     print(f"   Losses:     {reward_callback.losses} ({reward_callback.losses/total*100:.1f}%)")
@@ -631,6 +761,8 @@ if __name__ == "__main__":
                         help="Disable live training plots")
     parser.add_argument("--plot_every", type=int, default=5,
                         help="Update plots every N episodes (default: 5)")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume training from latest checkpoint")
     args = parser.parse_args()
 
     train(args)
