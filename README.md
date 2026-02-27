@@ -131,6 +131,9 @@ flowchart TD
 | Possession | +0.02/step |
 | Shot on target | +0.3 |
 | Time penalty | -0.01/step |
+| Successful Pass | +2.0 |
+| Goalkeeper Save | +5.0 |
+| Assist Bonus | +5.0 |
 
 ---
 
