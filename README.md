@@ -40,10 +40,16 @@ Results: 11 passed, 0 failed out of 11 tests
 
 ```bash
 # 🎮 Train AND watch the agent play in a Pygame window
-python train.py --render --timesteps 500000
+python train.py --render --timesteps 2000000
+
+# This trains the agent and **pops up a Pygame window every 20 episodes** so you can watch it improve.
+# To resume training later, just add the `--resume` flag:
+# python train.py --resume --render --timesteps 2000000
 
 # Headless training (faster, no visuals)
 python train.py --timesteps 2000000 --log
+# To resume headless training later:
+# python train.py --resume --timesteps 2000000 --log
 ```
 
 ### 4. Watch Trained Agent Play
