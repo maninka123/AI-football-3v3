@@ -97,24 +97,16 @@ Each player can perform 2 actions per step:
 
 ## 🤖 RL Architecture
 
-```
-┌──────────────────────────────────────────────┐
-│                 Training Loop                │
-│                                              │
-│  ┌─────────┐     ┌──────────────────┐       │
-│  │  PPO    │────▶│  Green Team      │       │
-│  │  Agent  │     │  (learning)      │       │
-│  └────┬────┘     └────────┬─────────┘       │
-│       │                   │                  │
-│       │ periodic    ┌─────▼─────┐           │
-│       │ copy        │ FootballEnv│           │
-│       │             └─────┬─────┘           │
-│       │                   │                  │
-│  ┌────▼────┐     ┌────────▼─────────┐       │
-│  │ Frozen  │────▶│  Red Team        │       │
-│  │ Copy    │     │  (opponent)      │       │
-│  └─────────┘     └──────────────────┘       │
-└──────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph Training Loop
+        A[PPO Agent] -->|controls| B[Green Team - learning]
+        B --> C[FootballEnv]
+        C --> D[Red Team - opponent]
+        E[Frozen Copy] -->|controls| D
+        A -->|periodic copy| E
+        C -->|obs + reward| A
+    end
 ```
 
 - **Algorithm**: PPO with `[256, 256, 128]` networks
@@ -202,9 +194,9 @@ python play.py [OPTIONS]
 
 | Phase | Timesteps | What to Expect |
 |-------|-----------|----------------|
-| **Early** (0–200K) | Random movement, occasional accidental goals |
-| **Mid** (200K–1M) | Basic ball-chasing, some passing attempts |
-| **Late** (1M–2M+) | Coordinated play, passing, goal-saving |
+| **Early** | 0–200K | Random movement, occasional accidental goals |
+| **Mid** | 200K–1M | Basic ball-chasing, some passing attempts |
+| **Late** | 1M–2M+ | Coordinated play, passing, goal-saving |
 
 > **Tip**: Run with `--render --render_every 50` to watch improvement over time without slowing training too much.
 
