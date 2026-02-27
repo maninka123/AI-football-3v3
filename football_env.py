@@ -156,6 +156,7 @@ class Ball:
         self.last_touch_team = -1
         self.last_kicker = None  # Track the player who last kicked the ball
         self.second_last_touch_team = -1  # Track the team that touched the ball before the last kicker
+        self.kicked_from_x = 0.0  # Track x coordinate where the ball was passed from
 
     @property
     def pos(self):
@@ -530,10 +531,27 @@ class FootballEnv(gym.Env):
                 # It's a pass!
                 if closest_player.team == 0:
                     self.match_stats["green_passes"] += 1
-                    self._event_rewards += 2.0  # +2 reward for green team pass
+                    pass_reward = 0.1  # Base pass
+                    
+                    # Evaluate progression and key passes
+                    # Green attacks Right (larger X is better)
+                    if self.ball.x > self.ball.kicked_from_x + 50.0:
+                        pass_reward += 0.2  # Progressive pass
+                    if self.ball.x > PITCH_WIDTH * 0.66:
+                        pass_reward += 0.5  # Key pass
+                        
+                    self._event_rewards += pass_reward
                 else:
                     self.match_stats["red_passes"] += 1
-                    self._event_rewards -= 2.0  # -2 penalty for green team if red passes
+                    pass_penalty = 0.1
+                    
+                    # Red attacks Left (smaller X is better)
+                    if self.ball.x < self.ball.kicked_from_x - 50.0:
+                        pass_penalty += 0.2
+                    if self.ball.x < PITCH_WIDTH * 0.33:
+                        pass_penalty += 0.5
+                        
+                    self._event_rewards -= pass_penalty
 
             # 2. Goalkeeper Save Detection
             # If GK picks up a fast-moving ball last kicked by the opponent
@@ -548,10 +566,35 @@ class FootballEnv(gym.Env):
                     self.match_stats["red_saves"] += 1
                     self._event_rewards -= 5.0  # -5 penalty if red GK saves our shot
 
+            # 3. Turnover Detection
+            elif (self.ball.last_touch_team != -1 and 
+                  self.ball.last_touch_team != closest_player.team and
+                  not closest_player.is_goalkeeper):
+                # Opponent just lost the ball to us, or we lost it to them
+                if closest_player.team == 0:
+                    # Red lost the ball. Green gets interception/recovery
+                    self._event_rewards += 0.3
+                    
+                    # Penalize Red for turnover
+                    turnover_penalty = 0.5
+                    if self.ball.x > PITCH_WIDTH * 0.66: # Red's defensive third
+                        turnover_penalty += 1.0
+                    self._event_rewards += turnover_penalty # Green gains from Red's penalty
+                else:
+                    # Green lost the ball. Red gets interception/recovery
+                    self._event_rewards -= 0.3
+                    
+                    # Penalize Green for turnover
+                    turnover_penalty = 0.5
+                    if self.ball.x < PITCH_WIDTH * 0.33: # Green's defensive third
+                        turnover_penalty += 1.0
+                    self._event_rewards -= turnover_penalty
+
             self.ball.owner = closest_player
             closest_player.has_ball = True
             self.ball.last_touch_team = closest_player.team
             self.ball.last_kicker = None  # Reset kicker once received
+            self.ball.kicked_from_x = 0.0 # Reset kick origin
 
     def _process_kicks(self, team, actions):
         """Process kick actions for a team."""
@@ -584,6 +627,7 @@ class FootballEnv(gym.Env):
             self.ball.second_last_touch_team = self.ball.last_touch_team
             self.ball.last_touch_team = player.team
             self.ball.last_kicker = player
+            self.ball.kicked_from_x = player.x  # Record where the ball was passed/shot from
             player.cooldown = 5  # brief cooldown after kicking
 
             # Shot statistics tracking
@@ -592,8 +636,24 @@ class FootballEnv(gym.Env):
                 if player.team == 0 and direction[0] > 0.5:
                     if GOAL_Y_TOP - 40 <= self.ball.y <= GOAL_Y_BOTTOM + 40:
                         self.match_stats["green_shots"] += 1
+                        
+                        # xG Calculation for Green
+                        dist = math.sqrt((PITCH_WIDTH - player.x)**2 + (PITCH_HEIGHT/2 - player.y)**2)
+                        angle_penalty = abs(PITCH_HEIGHT/2 - player.y) / (PITCH_HEIGHT/2)
+                        xg = max(0.01, 1.0 - (dist * 0.002) - (angle_penalty * 0.3))
+                        self._event_rewards += (2.0 * xg)
+                        self._event_rewards += 1.0  # Shot on target
+                        
                 elif player.team == 1 and direction[0] < -0.5:
                     if GOAL_Y_TOP - 40 <= self.ball.y <= GOAL_Y_BOTTOM + 40:
+                        self.match_stats["red_shots"] += 1
+                        
+                        # xG Calculation for Red
+                        dist = math.sqrt((player.x - 0)**2 + (PITCH_HEIGHT/2 - player.y)**2)
+                        angle_penalty = abs(PITCH_HEIGHT/2 - player.y) / (PITCH_HEIGHT/2)
+                        xg = max(0.01, 1.0 - (dist * 0.002) - (angle_penalty * 0.3))
+                        self._event_rewards -= (2.0 * xg)
+                        self._event_rewards -= 1.0  # Shot on target penalty
                         self.match_stats["red_shots"] += 1
 
     def _attempt_tackle(self, player):
@@ -934,42 +994,44 @@ class FootballEnv(gym.Env):
         if self.green_score > self.prev_green_score:
             reward += 10.0
             if self.ball.second_last_touch_team == 0:
-                reward += 5.0  # Assist bonus!
+                reward += 3.0  # Assist bonus!
         if self.red_score > self.prev_red_score:
             reward -= 10.0
             if self.ball.second_last_touch_team == 1:
-                reward -= 5.0  # Opponent Assist penalty
+                reward -= 3.0  # Opponent Assist penalty
 
         # Win/lose bonus
         if self.done:
             # Reached goal limit
             if self.green_score >= GOALS_TO_WIN:
-                reward += 100.0
+                reward += 20.0
             elif self.red_score >= GOALS_TO_WIN:
-                reward -= 100.0
+                reward -= 20.0
             # Time ran out, check who has more goals
             elif getattr(self, "truncated", False):
                 if self.green_score > self.red_score:
-                    reward += 100.0  # Green wins on time
+                    reward += 20.0  # Green wins on time
                 elif self.red_score > self.green_score:
-                    reward -= 100.0  # Red wins on time
+                    reward -= 20.0  # Red wins on time
 
         # Ball progression toward opponent's goal (right side for green)
         ball_progress = (self.ball.x - self.prev_ball_x) / PITCH_WIDTH
-        reward += ball_progress * 0.5
+        reward += ball_progress * 0.05
 
-        # Possession reward
+        # Possession reward (only if also progressing)
         if self.ball.owner is not None and self.ball.owner.team == 0:
-            reward += 0.02
+            if ball_progress > 0:
+                reward += 0.005
 
-        # Shot on target bonus
-        if (self.ball.owner is None and self.ball.vx > 0 and
-            self.ball.x > PITCH_WIDTH * 0.6):
-            if GOAL_Y_TOP - 20 <= self.ball.y <= GOAL_Y_BOTTOM + 20:
-                reward += 0.3
+        # Block shot / clearance (If defending team clears ball traveling fast)
+        if (self.ball.owner is None and self.ball.speed > 3.0 and
+            self.ball.last_touch_team == 1 and self.ball.x < PITCH_WIDTH * 0.33):
+            # A green player is near the ball in defense
+            # Wait, this is handled better as a discrete event in _handle_ball_interactions
+            pass
 
         # Time penalty (encourages faster play)
-        reward -= 0.01
+        reward -= 0.002
 
         return reward
 

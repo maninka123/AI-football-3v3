@@ -125,15 +125,22 @@ flowchart TD
 |--------|-------|
 | Score a goal | +10 |
 | Concede a goal | -10 |
-| Win match | +100 |
-| Lose match | -100 |
-| Ball toward goal | +0.5 × progress |
-| Possession | +0.02/step |
-| Shot on target | +0.3 |
-| Time penalty | -0.01/step |
-| Successful Pass | +2.0 |
-| Goalkeeper Save | +5.0 |
-| Assist Bonus | +5.0 |
+| Win match | +20 |
+| Lose match | -20 |
+| Ball toward goal | +0.05 × progress |
+| Possession | +0.005/step (only if also progressing) |
+| Shot on target | +1.0 |
+| Shot quality (xG) | +2.0 × xG |
+| Time penalty | -0.002/step |
+| Successful Pass | +0.1 |
+| Pass that advances play | +0.2 (extra if forward or breaks a line) |
+| Key pass | +0.5 |
+| Lose possession | -0.5 |
+| Turnover in defensive third | -1.0 |
+| Tackle won / interception | +0.3 |
+| Block shot / clearance | +0.2 |
+| Goalkeeper Save | +2.0 |
+| Assist Bonus | +3.0 |
 
 ---
 
