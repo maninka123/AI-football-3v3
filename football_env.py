@@ -59,8 +59,8 @@ CENTER_CIRCLE_RADIUS = 60
 
 # Player properties
 PLAYER_RADIUS = 12
-PLAYER_MAX_SPEED = 4.0
-GK_MAX_SPEED = 3.5  # goalkeepers are slightly slower
+PLAYER_MAX_SPEED = 5.0  # Increased for faster gameplay
+GK_MAX_SPEED = 4.5      # Goalkeepers slightly slower
 PLAYER_KICK_RANGE = 20  # distance at which player can kick ball
 PLAYER_TACKLE_RANGE = 18  # distance for tackling
 
@@ -154,6 +154,7 @@ class Ball:
         self.vy = 0.0
         self.owner = None
         self.last_touch_team = -1
+        self.last_kicker = None  # Track the player who last kicked the ball
 
     @property
     def pos(self):
@@ -255,6 +256,23 @@ class FootballEnv(gym.Env):
         self.prev_green_score = 0
         self.prev_red_score = 0
 
+        # Match statistics and event rewards
+        self.match_stats = self._empty_stats()
+        self._event_rewards = 0.0
+
+    def _empty_stats(self):
+        return {
+            "green_possession_steps": 0,
+            "red_possession_steps": 0,
+            "total_steps": 0,
+            "green_passes": 0,
+            "red_passes": 0,
+            "green_shots": 0,
+            "red_shots": 0,
+            "green_saves": 0,
+            "red_saves": 0,
+        }
+
     def reset(self, seed=None, options=None):
         """Reset the environment to start a new match."""
         super().reset(seed=seed)
@@ -276,6 +294,9 @@ class FootballEnv(gym.Env):
         self.prev_ball_x = self.ball.x
         self.prev_green_score = 0
         self.prev_red_score = 0
+
+        self.match_stats = self._empty_stats()
+        self._event_rewards = 0.0
 
         obs = self._get_obs(team=0)
         info = self._get_info()
@@ -365,6 +386,14 @@ class FootballEnv(gym.Env):
             self._update_cooldowns()
             self._update_stamina()
 
+        # Update possession stats
+        self.match_stats["total_steps"] += 1
+        if self.ball.owner is not None:
+            if self.ball.owner.team == 0:
+                self.match_stats["green_possession_steps"] += 1
+            else:
+                self.match_stats["red_possession_steps"] += 1
+
         # Check win condition
         truncated = False
         if self.green_score >= GOALS_TO_WIN or self.red_score >= GOALS_TO_WIN:
@@ -375,6 +404,10 @@ class FootballEnv(gym.Env):
 
         # Compute reward for green team
         reward = self._compute_reward()
+        
+        # Add discrete event rewards and reset
+        reward += self._event_rewards
+        self._event_rewards = 0.0
 
         # Update tracking
         self.prev_ball_x = self.ball.x
@@ -485,9 +518,37 @@ class FootballEnv(gym.Env):
                 # GK can still use feet outside box, but no handling
                 pass
 
+            # ---- REWARD LOGIC: Passing & Goalkeeper Saves ----
+            # 1. Successful Pass Detection
+            if (self.ball.last_kicker is not None and 
+                self.ball.last_kicker.team == closest_player.team and 
+                self.ball.last_kicker is not closest_player):
+                
+                # It's a pass!
+                if closest_player.team == 0:
+                    self.match_stats["green_passes"] += 1
+                    self._event_rewards += 1.0  # +1 reward for green team
+                else:
+                    self.match_stats["red_passes"] += 1
+                    self._event_rewards -= 1.0  # -1 penalty for green team
+
+            # 2. Goalkeeper Save Detection
+            # If GK picks up a fast-moving ball last kicked by the opponent
+            if (closest_player.is_goalkeeper and self.ball.speed > 3.0 and
+                self.ball.last_touch_team != -1 and 
+                self.ball.last_touch_team != closest_player.team):
+                
+                if closest_player.team == 0:
+                    self.match_stats["green_saves"] += 1
+                    self._event_rewards += 2.0  # +2 reward for a save
+                else:
+                    self.match_stats["red_saves"] += 1
+                    self._event_rewards -= 2.0  # -2 penalty if red GK saves our shot
+
             self.ball.owner = closest_player
             closest_player.has_ball = True
             self.ball.last_touch_team = closest_player.team
+            self.ball.last_kicker = None  # Reset kicker once received
 
     def _process_kicks(self, team, actions):
         """Process kick actions for a team."""
@@ -518,7 +579,18 @@ class FootballEnv(gym.Env):
             self.ball.vx = direction[0] * power
             self.ball.vy = direction[1] * power
             self.ball.last_touch_team = player.team
+            self.ball.last_kicker = player
             player.cooldown = 5  # brief cooldown after kicking
+
+            # Shot statistics tracking
+            # If kicked towards the opponent's goal mouth
+            if power >= BALL_KICK_POWER * 0.9:
+                if player.team == 0 and direction[0] > 0.5:
+                    if GOAL_Y_TOP - 40 <= self.ball.y <= GOAL_Y_BOTTOM + 40:
+                        self.match_stats["green_shots"] += 1
+                elif player.team == 1 and direction[0] < -0.5:
+                    if GOAL_Y_TOP - 40 <= self.ball.y <= GOAL_Y_BOTTOM + 40:
+                        self.match_stats["red_shots"] += 1
 
     def _attempt_tackle(self, player):
         """Attempt to tackle the ball carrier."""
@@ -844,9 +916,11 @@ class FootballEnv(gym.Env):
         for player in self.all_players:
             speed = math.sqrt(player.vx**2 + player.vy**2)
             if speed > 0.5:
-                player.stamina = max(0.3, player.stamina - 0.0005)
+                # Drains slower, min cap at 0.4 (so players don't become snails)
+                player.stamina = max(0.4, player.stamina - 0.0003)
             else:
-                player.stamina = min(1.0, player.stamina + 0.001)
+                # Recovers faster
+                player.stamina = min(1.0, player.stamina + 0.002)
 
     def _compute_reward(self):
         """Compute reward for the green team."""
@@ -931,6 +1005,7 @@ class FootballEnv(gym.Env):
             "ball_pos": (self.ball.x, self.ball.y),
             "ball_owner": (self.ball.owner.team, self.ball.owner.player_id)
                           if self.ball.owner else None,
+            "match_stats": self.match_stats,
         }
 
     def render(self):
@@ -951,6 +1026,7 @@ class FootballEnv(gym.Env):
             "game_state": self.game_state,
             "steps": self.steps,
             "pitch_margin": PITCH_MARGIN,
+            "match_stats": self.match_stats,
         }
 
         return self.renderer.render(state)

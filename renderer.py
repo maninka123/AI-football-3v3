@@ -23,6 +23,8 @@ GOAL_NET_COLOR = (200, 200, 200, 128)
 SCOREBOARD_BG = (30, 30, 30)
 SCOREBOARD_TEXT = (255, 255, 255)
 TEXT_SHADOW = (0, 0, 0)
+STADIUM_TRACK = (180, 80, 60)
+STADIUM_OUTER = (40, 45, 50)
 
 # Import pitch constants
 from football_env import (
@@ -71,7 +73,12 @@ class FootballRenderer:
 
         margin = state.get("pitch_margin", PITCH_MARGIN)
 
-        self.screen.fill(PITCH_GREEN)
+        self.screen.fill(STADIUM_OUTER)
+        
+        # Draw stadium
+        self._draw_stadium(margin)
+        
+        # Draw grass and lines
         self._draw_pitch(margin)
         self._draw_goals(margin)
 
@@ -93,12 +100,29 @@ class FootballRenderer:
         # Draw game state indicator
         self._draw_game_state_indicator(state["game_state"], margin)
 
+        # Draw Match Stats HUD
+        if "match_stats" in state:
+            self._draw_stats_hud(state["match_stats"], margin)
+
         pygame.display.flip()
         self.clock.tick(30)
         self.frame_count += 1
 
         # Return surface as RGB array for gymnasium
         return pygame.surfarray.array3d(self.screen).transpose((1, 0, 2))
+
+    def _draw_stadium(self, margin):
+        """Draw the stadium track around the grass pitch."""
+        # The running track around the pitch
+        track_rect = pygame.Rect(margin - 15, margin - 15, 
+                                 PITCH_WIDTH + 30, PITCH_HEIGHT + 30)
+        pygame.draw.rect(self.screen, STADIUM_TRACK, track_rect, border_radius=10)
+        # Inner white line for track
+        pygame.draw.rect(self.screen, (200, 200, 200), track_rect, 2, border_radius=10)
+        
+        # The actual grass base so lines can be drawn on top
+        grass_rect = pygame.Rect(margin, margin, PITCH_WIDTH, PITCH_HEIGHT)
+        pygame.draw.rect(self.screen, PITCH_GREEN, grass_rect)
 
     def _draw_pitch(self, margin):
         """Draw the football pitch with all markings."""
@@ -111,7 +135,7 @@ class FootballRenderer:
             rect = pygame.Rect(m + i * stripe_width, m, stripe_width, PITCH_HEIGHT)
             pygame.draw.rect(self.screen, color, rect)
 
-        # Pitch border
+        # Pitch border (white line)
         pygame.draw.rect(self.screen, LINE_WHITE,
                          (m, m, PITCH_WIDTH, PITCH_HEIGHT), 3)
 
@@ -292,6 +316,42 @@ class FootballRenderer:
             bg_rect = text_rect.inflate(20, 10)
             pygame.draw.rect(self.screen, (0, 0, 0, 180), bg_rect, border_radius=5)
             self.screen.blit(text_surface, text_rect)
+
+    def _draw_stats_hud(self, stats, margin):
+        """Draw match statistics on the left and right corners of the screen."""
+        total_steps = max(stats.get("total_steps", 1), 1)
+        green_pos_steps = stats.get("green_possession_steps", 0)
+        red_pos_steps = stats.get("red_possession_steps", 0)
+        total_pos = max(green_pos_steps + red_pos_steps, 1)
+
+        green_pos = (green_pos_steps / total_pos) * 100
+        red_pos = (red_pos_steps / total_pos) * 100
+
+        # Create transparent panels for Green and Red stats
+        panel_w, panel_h = 160, 100
+        panel_y = margin + 10
+
+        # Green Stats Panel (Left)
+        green_panel_x = margin + 10
+        pygame.draw.rect(self.screen, (20, 30, 20), (green_panel_x, panel_y, panel_w, panel_h), border_radius=8)
+        pygame.draw.rect(self.screen, GREEN_TEAM_COLOR, (green_panel_x, panel_y, panel_w, panel_h), 1, border_radius=8)
+        
+        self.screen.blit(self.font_small.render("GREEN STATS", True, GREEN_TEAM_COLOR), (green_panel_x + 10, panel_y + 5))
+        self.screen.blit(self.font_small.render(f"Possess: {green_pos:.1f}%", True, SCOREBOARD_TEXT), (green_panel_x + 10, panel_y + 25))
+        self.screen.blit(self.font_small.render(f"Passes: {stats['green_passes']}", True, SCOREBOARD_TEXT), (green_panel_x + 10, panel_y + 40))
+        self.screen.blit(self.font_small.render(f"Shots: {stats['green_shots']}", True, SCOREBOARD_TEXT), (green_panel_x + 10, panel_y + 55))
+        self.screen.blit(self.font_small.render(f"Saves: {stats['green_saves']}", True, SCOREBOARD_TEXT), (green_panel_x + 10, panel_y + 70))
+
+        # Red Stats Panel (Right)
+        red_panel_x = self.width - margin - panel_w - 10
+        pygame.draw.rect(self.screen, (30, 20, 20), (red_panel_x, panel_y, panel_w, panel_h), border_radius=8)
+        pygame.draw.rect(self.screen, RED_TEAM_COLOR, (red_panel_x, panel_y, panel_w, panel_h), 1, border_radius=8)
+        
+        self.screen.blit(self.font_small.render("RED STATS", True, RED_TEAM_COLOR), (red_panel_x + 10, panel_y + 5))
+        self.screen.blit(self.font_small.render(f"Possess: {red_pos:.1f}%", True, SCOREBOARD_TEXT), (red_panel_x + 10, panel_y + 25))
+        self.screen.blit(self.font_small.render(f"Passes: {stats['red_passes']}", True, SCOREBOARD_TEXT), (red_panel_x + 10, panel_y + 40))
+        self.screen.blit(self.font_small.render(f"Shots: {stats['red_shots']}", True, SCOREBOARD_TEXT), (red_panel_x + 10, panel_y + 55))
+        self.screen.blit(self.font_small.render(f"Saves: {stats['red_saves']}", True, SCOREBOARD_TEXT), (red_panel_x + 10, panel_y + 70))
 
     def close(self):
         """Clean up Pygame."""

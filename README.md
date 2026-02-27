@@ -200,18 +200,3 @@ python play.py [OPTIONS]
 
 > **Tip**: Run with `--render --render_every 50` to watch improvement over time without slowing training too much.
 
----
-
-## 🛠️ Requirements
-
-- Python 3.8+
-- macOS / Linux / Windows
-- ~500MB disk space (for PyTorch)
-
-### Dependencies
-- `gymnasium` — RL environment interface
-- `stable-baselines3` — PPO algorithm
-- `pygame` — Game visualization
-- `numpy` — Numerical computations
-- `torch` — Neural network backend
-- `tensorboard` — Training metrics (optional)
