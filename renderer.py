@@ -95,7 +95,8 @@ class FootballRenderer:
 
         # Draw scoreboard
         self._draw_scoreboard(state["green_score"], state["red_score"],
-                              state["game_state"], state["steps"])
+                              state["game_state"], state["steps"], 
+                              state.get("current_episode", 0))
 
         # Draw game state indicator
         self._draw_game_state_indicator(state["game_state"], margin)
@@ -261,10 +262,10 @@ class FootballRenderer:
         # Small pentagon pattern on ball
         pygame.draw.circle(self.screen, (50, 50, 50), (x, y), 2)
 
-    def _draw_scoreboard(self, green_score, red_score, game_state, steps):
+    def _draw_scoreboard(self, green_score, red_score, game_state, steps, episode=0):
         """Draw the scoreboard at the top."""
         # Scoreboard background
-        sb_width = 260
+        sb_width = 300  # slightly wider to fit episode text
         sb_height = 50
         sb_x = (self.width - sb_width) // 2
         sb_y = 2
@@ -292,8 +293,11 @@ class FootballRenderer:
 
         # Time/steps indicator
         time_text = f"Step: {steps}"
+        if episode > 0:
+            time_text = f"Ep: {episode} | Step: {steps}"
+            
         time_surface = self.font_small.render(time_text, True, (180, 180, 180))
-        self.screen.blit(time_surface, (sb_x + sb_width // 2 - 25, sb_y + sb_height + 2))
+        self.screen.blit(time_surface, (sb_x + sb_width // 2 - 40, sb_y + sb_height + 2))
 
     def _draw_game_state_indicator(self, game_state, margin):
         """Draw indicator for current game state (kickoff, throw-in, etc.)."""

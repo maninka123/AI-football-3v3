@@ -58,7 +58,7 @@ def play(args):
 
     try:
         for episode in range(args.episodes):
-            obs, info = env.reset()
+            obs, info = env.reset(options={"episode": episode + 1})
             done = False
             total_reward = 0
             step_count = 0

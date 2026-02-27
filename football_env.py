@@ -284,6 +284,7 @@ class FootballEnv(gym.Env):
         self.game_state = GameState.KICKOFF
         self.kickoff_team = 0
         self.state_timer = 0
+        self.current_episode = options.get("episode", 0) if options else 0
 
         # Reset ball to center
         self.ball.reset()
@@ -1027,6 +1028,7 @@ class FootballEnv(gym.Env):
             "steps": self.steps,
             "pitch_margin": PITCH_MARGIN,
             "match_stats": self.match_stats,
+            "current_episode": getattr(self, "current_episode", 0),
         }
 
         return self.renderer.render(state)

@@ -432,7 +432,8 @@ class LiveVisualizationCallback(BaseCallback):
         if hasattr(training_env, 'opponent_policy'):
             self.vis_env.set_opponent_policy(training_env.opponent_policy)
 
-        obs, info = self.vis_env.reset()
+        # Pass the current episode down to the environment
+        obs, info = self.vis_env.reset(options={"episode": self.episodes_seen})
         done = False
         total_reward = 0
         match_steps = 0
