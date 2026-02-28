@@ -214,6 +214,7 @@ class FootballEnv(gym.Env):
         super().__init__()
         self.render_mode = render_mode
         self.renderer = None
+        self.np_random = np.random.default_rng()  # safe fallback
 
         # Action space: 3 players × (move_dir, kick_dir)
         # Each player has: movement (9 choices) + kick/action (9 choices)
