@@ -1033,6 +1033,24 @@ class FootballEnv(gym.Env):
         # Time penalty (encourages faster play)
         reward -= 0.002
 
+        # Spacing Penalty (discourage 'swarm' behavior)
+        # Calculate mean pairwise distance between the 3 outfield players on the green team
+        p1 = self.green_team[0] # GK
+        p2 = self.green_team[1] # Outfield 1
+        p3 = self.green_team[2] # Outfield 2
+        
+        # We only really care if the two outfield players are physically on top of each other, 
+        # or if they are sitting in the goalkeeper's lap.
+        dist_12 = math.hypot(p1.x - p2.x, p1.y - p2.y)
+        dist_13 = math.hypot(p1.x - p3.x, p1.y - p3.y)
+        dist_23 = math.hypot(p2.x - p3.x, p2.y - p3.y)
+        
+        mean_spacing = (dist_12 + dist_13 + dist_23) / 3.0
+        
+        # If players are too clumped (e.g. less than 80px apart on average)
+        if mean_spacing < 80.0:
+            reward -= 0.01  # Small dense penalty for bad spacing
+
         return reward
 
     def _get_obs(self, team=0):

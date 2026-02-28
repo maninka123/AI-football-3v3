@@ -38,44 +38,58 @@ TRAINING_STATE_FILE = os.path.join("checkpoints", "training_state.json")
 class SelfPlayCallback(BaseCallback):
     """
     Callback to update the opponent's policy periodically during training.
-    Every `update_interval` steps, the opponent gets a copy of the current agent.
+    Every `update_interval` steps, the current agent is saved into an opponent pool.
+    The environment then samples randomly from this pool to prevent catastrophic forgetting.
     """
 
-    def __init__(self, env, update_interval=50000, verbose=1):
+    def __init__(self, env, update_interval=50000, pool_size=5, verbose=1):
         super().__init__(verbose)
         self.env = env
         self.update_interval = update_interval
+        self.pool_size = pool_size
         self.last_update = 0
         self.n_updates = 0
+        self.pool_dir = os.path.join("checkpoints", "opponent_pool")
+
+        # Ensure opponent pool directory exists
+        os.makedirs(self.pool_dir, exist_ok=True)
 
     def _on_step(self) -> bool:
         if self.num_timesteps - self.last_update >= self.update_interval:
-            # Update opponent with current policy
             if self.verbose:
                 print(f"\n🔄 Self-play update #{self.n_updates + 1} "
                       f"at step {self.num_timesteps}")
 
-            # Get the underlying environment from DummyVecEnv
+            # Save current model into the opponent pool
+            model_path = os.path.join(self.pool_dir, f"opponent_{self.n_updates}")
+            self.model.save(model_path)
+
+            # Manage pool size (delete oldest if we have too many)
+            pool_files = sorted(glob.glob(os.path.join(self.pool_dir, "opponent_*.zip")), 
+                                key=os.path.getmtime)
+            
+            while len(pool_files) > self.pool_size:
+                oldest = pool_files.pop(0)
+                try:
+                    os.remove(oldest)
+                except OSError:
+                    pass
+
+            # Update the environment with the current pool of opponents
             actual_env = self.env.envs[0]
-
-            # Create a frozen copy of the current policy for the opponent
-            opponent_model = PPO.load(
-                os.path.join("checkpoints", "latest_opponent"),
-                env=None
-            ) if os.path.exists(os.path.join("checkpoints", "latest_opponent.zip")) else None
-
-            # Save current model as opponent
-            self.model.save(os.path.join("checkpoints", "latest_opponent"))
-
-            # Load it as a separate model for the opponent
             try:
-                opponent = PPO.load(os.path.join("checkpoints", "latest_opponent"))
-                actual_env.set_opponent_policy(opponent)
+                # Load all available opponents from the pool
+                opponent_policies = []
+                for p_file in pool_files:
+                    opponent_policies.append(PPO.load(p_file, env=None))
+                
+                # We need to add a method `set_opponent_pool` to `SelfPlayWrapper`
+                actual_env.set_opponent_pool(opponent_policies)
                 if self.verbose:
-                    print(f"   ✅ Opponent policy updated successfully")
+                    print(f"   ✅ Opponent pool updated ({len(opponent_policies)} models available)")
             except Exception as e:
                 if self.verbose:
-                    print(f"   ⚠️  Failed to update opponent: {e}")
+                    print(f"   ⚠️  Failed to update opponent pool: {e}")
 
             self.last_update = self.num_timesteps
             self.n_updates += 1

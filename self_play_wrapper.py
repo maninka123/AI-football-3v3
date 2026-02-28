@@ -35,16 +35,28 @@ class SelfPlayWrapper(gym.Env):
         self.action_space = self.env.action_space
         self.observation_space = self.env.observation_space
 
-        # Opponent policy (None = random actions)
-        self.opponent_policy = opponent_policy
+        # Opponent pool (list of frozen policies, empty initially)
+        self.opponent_pool = []
+        if opponent_policy is not None:
+            self.opponent_pool.append(opponent_policy)
+            
+        # The opponent chosen for the current episode
+        self.current_opponent = None
 
         # For storing the opponent's observation
         self._opponent_obs = None
 
     def reset(self, seed=None, options=None):
-        """Reset the environment."""
+        """Reset the environment and pick a new opponent."""
         obs, info = self.env.reset(seed=seed, options=options)
         self._opponent_obs = self.env._get_obs(team=1)
+        
+        # Sample an opponent from the pool for this episode
+        if self.opponent_pool:
+            self.current_opponent = np.random.choice(self.opponent_pool)
+        else:
+            self.current_opponent = None
+            
         return obs, info
 
     def step(self, action):
@@ -68,22 +80,32 @@ class SelfPlayWrapper(gym.Env):
 
     def _get_opponent_action(self):
         """Get action from the opponent policy."""
-        if self.opponent_policy is None:
+        if self.current_opponent is None or self._opponent_obs is None:
             # Random opponent
             return self.action_space.sample()
 
-        # Use the frozen policy to get opponent actions
-        # Mirror the observation so opponent sees from their perspective
-        obs = self._opponent_obs
-        if obs is None:
-            return self.action_space.sample()
+        # Mirror the observation so the opponent sees the field from its own perspective
+        obs = self._mirror_obs(self._opponent_obs)
 
-        action, _ = self.opponent_policy.predict(obs, deterministic=False)
+        # Use deterministic=True for a more stable learning signal
+        action, _ = self.current_opponent.predict(obs, deterministic=True)
 
         # Mirror the action directions for player movement and kicks
         # Since red team attacks left, we need to mirror horizontal directions
         mirrored_action = self._mirror_action(action)
         return mirrored_action
+
+    def _mirror_obs(self, obs):
+        """Mirror the observation left-right for the opponent perspective."""
+        mirrored = obs.copy()
+        # Mirror x-coordinates (every even index in player positions)
+        for i in range(0, 12, 2):
+            mirrored[i] = 1.0 - obs[i]
+        # Mirror ball x (index 12)
+        mirrored[12] = 1.0 - obs[12]
+        # Mirror ball vx (index 14). Since vx is normalized [0, 1], 1.0 - vx flips it.
+        mirrored[14] = 1.0 - obs[14]
+        return mirrored
 
     def _mirror_action(self, action):
         """
@@ -102,9 +124,9 @@ class SelfPlayWrapper(gym.Env):
             mirrored[i] = mirror_map.get(int(mirrored[i]), int(mirrored[i]))
         return mirrored
 
-    def set_opponent_policy(self, policy):
-        """Update the opponent's policy (for self-play updates)."""
-        self.opponent_policy = policy
+    def set_opponent_pool(self, pool):
+        """Update the pool of available opponent policies."""
+        self.opponent_pool = pool
 
     def render(self):
         """Render the environment."""
@@ -115,23 +137,3 @@ class SelfPlayWrapper(gym.Env):
         self.env.close()
 
 
-class MirroredObsWrapper(gym.ObservationWrapper):
-    """
-    Wrapper that mirrors observations for the red team perspective.
-    This ensures the opponent policy sees the pitch from its own viewpoint.
-    """
-
-    def __init__(self, env):
-        super().__init__(env)
-
-    def observation(self, obs):
-        """Mirror the observation left-right."""
-        mirrored = obs.copy()
-        # Mirror x-coordinates (every even index in player positions)
-        for i in range(0, 12, 2):
-            mirrored[i] = 1.0 - obs[i]
-        # Mirror ball x
-        mirrored[12] = 1.0 - obs[12]
-        # Mirror ball vx
-        mirrored[14] = 1.0 - obs[14]
-        return mirrored
