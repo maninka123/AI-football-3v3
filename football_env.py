@@ -816,16 +816,16 @@ class FootballEnv(gym.Env):
 
         ball_x = self.ball.x
         ball_y = self.ball.y
+        last_touch = self.ball.last_touch_team  # snapshot
 
         # Side-line out (top or bottom)
         if ball_y <= BALL_RADIUS or ball_y >= PITCH_HEIGHT - BALL_RADIUS:
             # Side-line out -> Throw-in
-            # If no one touched it yet, default to team of nearest player
-            if self.ball.last_touch_team == -1:
+            if last_touch == -1:
                 nearest = min(self.all_players, key=lambda p: p.distance_to(ball_x, ball_y))
                 self.set_piece_team = nearest.team
             else:
-                self.set_piece_team = 1 - self.ball.last_touch_team
+                self.set_piece_team = 1 - last_touch
                 
             self._clear_ball_context()
             self.game_state = GameState.THROW_IN
@@ -833,7 +833,6 @@ class FootballEnv(gym.Env):
             throw_x = np.clip(ball_x, 10, PITCH_WIDTH - 10)
             throw_y = BALL_RADIUS + 5 if ball_y <= BALL_RADIUS else PITCH_HEIGHT - BALL_RADIUS - 5
             self.set_piece_pos = (throw_x, throw_y)
-            self.set_piece_team = self.set_piece_team # redundant but explicit
             self.state_timer = 0
             
             # Zero out player velocities for clean restart
@@ -844,12 +843,12 @@ class FootballEnv(gym.Env):
 
         # End-line out (left or right) — not a goal
         if ball_x <= BALL_RADIUS:
-            if self.ball.last_touch_team == -1:
+            if last_touch == -1:
                 # Default: goal kick for green
                 self.game_state = GameState.GOAL_KICK
                 self.set_piece_team = 0
                 self.set_piece_pos = (GOAL_AREA_WIDTH, PITCH_HEIGHT / 2)
-            elif self.ball.last_touch_team == 0:
+            elif last_touch == 0:
                 # Green touched last -> corner for red
                 self.game_state = GameState.CORNER_KICK
                 self.set_piece_team = 1
@@ -870,12 +869,12 @@ class FootballEnv(gym.Env):
             return
 
         if ball_x >= PITCH_WIDTH - BALL_RADIUS:
-            if self.ball.last_touch_team == -1:
+            if last_touch == -1:
                 # Default: goal kick for red
                 self.game_state = GameState.GOAL_KICK
                 self.set_piece_team = 1
                 self.set_piece_pos = (PITCH_WIDTH - GOAL_AREA_WIDTH, PITCH_HEIGHT / 2)
-            elif self.ball.last_touch_team == 1:
+            elif last_touch == 1:
                 # Red touched last -> corner for green
                 self.game_state = GameState.CORNER_KICK
                 self.set_piece_team = 0
