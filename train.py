@@ -161,7 +161,7 @@ class LivePlotCallback(BaseCallback):
         """Initialize the matplotlib figure with 3 subplots."""
         plt.ion()  # Interactive mode
         self.fig, self.axes = plt.subplots(3, 1, figsize=(10, 9))
-        self.fig.suptitle('⚽ Football RL Training — Live Dashboard',
+        self.fig.suptitle('Football RL Training — Live Dashboard',
                           fontsize=14, fontweight='bold', y=0.98)
         self.fig.set_facecolor('#f4f6f9')
 
