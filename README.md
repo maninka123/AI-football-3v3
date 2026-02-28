@@ -227,5 +227,9 @@ When you start training, a live Matplotlib dashboard will pop up, actively track
 
 ***
 
+<div align="center">
+
 *"Some people think football is a matter of life and death. I assure you, it's much more serious than that."* – Bill Shankly  
-Let the training begin, and may the best AI win! 🚀🏆
+**Let the training begin, and may the best AI win! 🚀🏆**
+
+</div>
