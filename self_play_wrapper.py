@@ -48,7 +48,7 @@ class SelfPlayWrapper(gym.Env):
 
     def reset(self, seed=None, options=None):
         """Reset the environment, swap sides, and pick a new opponent."""
-        obs, info = self.env.reset(seed=seed, options=options)
+        _, info = self.env.reset(seed=seed, options=options)
         
         # Phase 6: Canonical Frame. Randomly assign learning agent to Green(0) or Red(1)
         self.learning_side = np.random.choice([0, 1])
@@ -110,17 +110,6 @@ class SelfPlayWrapper(gym.Env):
 
         return final_obs, learning_reward, done, truncated, info
 
-    def _mirror_obs(self, obs):
-        """Mirror the observation left-right for the opponent perspective."""
-        mirrored = obs.copy()
-        # Mirror x-coordinates (every even index in player positions)
-        for i in range(0, 12, 2):
-            mirrored[i] = 1.0 - obs[i]
-        # Mirror ball x (index 12)
-        mirrored[12] = 1.0 - obs[12]
-        # Mirror ball vx (index 14). Since vx is normalized [0, 1], 1.0 - vx flips it.
-        mirrored[14] = 1.0 - obs[14]
-        return mirrored
 
     def _mirror_action(self, action):
         """
