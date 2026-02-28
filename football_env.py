@@ -146,6 +146,9 @@ class Ball:
         self.vy = 0.0
         self.owner = None  # Player object or None
         self.last_touch_team = -1  # -1 = none, 0 = green, 1 = red
+        self.last_kicker = None
+        self.second_last_touch_team = -1
+        self.kicked_from_x = 0.0
 
     def reset(self, x=None, y=None):
         self.x = x if x is not None else PITCH_WIDTH / 2
