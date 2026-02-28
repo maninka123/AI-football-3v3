@@ -582,7 +582,18 @@ class FootballEnv(gym.Env):
 
             # 2. Goalkeeper Save Detection
             # If GK picks up a fast-moving ball last kicked by the opponent
+            is_shot_on_goal = False
+            if closest_player.team == 0:
+                # Green GK (Left goal): ball moving left (vx < -1) in left third
+                if self.ball.vx < -1.0 and self.ball.x < PITCH_WIDTH * 0.35:
+                    is_shot_on_goal = True
+            else:
+                # Red GK (Right goal): ball moving right (vx > 1) in right third
+                if self.ball.vx > 1.0 and self.ball.x > PITCH_WIDTH * 0.65:
+                    is_shot_on_goal = True
+
             if (closest_player.is_goalkeeper and self.ball.speed > 3.0 and
+                is_shot_on_goal and
                 self.ball.last_kicker is not None and 
                 self.ball.last_kicker.team != closest_player.team):
                 
@@ -714,6 +725,11 @@ class FootballEnv(gym.Env):
             player.has_ball = True
             self.ball.last_touch_team = player.team
             player.cooldown = 8
+
+            # Clear kick context on successful tackle to prevent false pass/save credit
+            self.ball.last_kicker = None
+            self.ball.kicked_from_x = 0.0
+            self.ball.second_last_touch_team = -1
         else:
             # Failed tackle — foul!
             foul_chance = 0.4 * (1 - player.stamina)
