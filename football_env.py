@@ -384,7 +384,6 @@ class FootballEnv(gym.Env):
             # 5. Check rules
             self._check_goals()
             self._check_out_of_bounds()
-            self._check_offside()
             self._enforce_goalkeeper_restrictions()
             self._update_cooldowns()
             self._update_stamina()
@@ -618,6 +617,8 @@ class FootballEnv(gym.Env):
             # Perform kick
             direction = KICK_DIRECTION_VECTORS[kick_dir]
             power = BALL_KICK_POWER
+            
+            is_forward = (player.team == 0 and direction[0] > 0.2) or (player.team == 1 and direction[0] < -0.2)
 
             # Check if this is a pass (teammate in kick direction)
             is_pass = self._check_if_pass(player, direction, team)
@@ -634,6 +635,11 @@ class FootballEnv(gym.Env):
             self.ball.last_kicker = player
             self.ball.kicked_from_x = player.x  # Record where the ball was passed/shot from
             player.cooldown = 5  # brief cooldown after kicking
+            
+            if is_forward:
+                self._check_offside_on_kick(kicker=player)
+                if self.game_state != GameState.PLAYING:
+                    return
 
             # Shot statistics tracking
             # If kicked towards the opponent's goal mouth
@@ -674,7 +680,8 @@ class FootballEnv(gym.Env):
             return
 
         # Tackle success probability based on distance and stamina
-        success_chance = 0.6 * player.stamina * (1 - dist / PLAYER_TACKLE_RANGE)
+        success_chance = 0.15 + 0.55 * player.stamina * (1 - dist / PLAYER_TACKLE_RANGE)
+        success_chance = float(np.clip(success_chance, 0.05, 0.75))
 
         if self.np_random.random() < success_chance:
             # Successful tackle
@@ -823,72 +830,53 @@ class FootballEnv(gym.Env):
             self.ball.owner = None
             return
 
-    def _check_offside(self):
+    def _check_offside_on_kick(self, kicker):
         """
         Simplified offside rule:
         A player is offside if they are in the opponent's half and behind
-        the last defender (excluding GK) when a teammate plays the ball forward.
+        the last defender (excluding GK) exactly when a teammate plays the ball forward.
         """
         if self.game_state != GameState.PLAYING:
             return
-        if self.ball.owner is None:
-            return
 
-        owner = self.ball.owner
-
-        # Check offside for the team that has the ball
-        if owner.team == 0:  # Green has ball
+        if kicker.team == 0:  # Green attacks right
             attacking_team = self.green_team
             defending_team = self.red_team
-            forward_dir = 1  # Green attacks right
-        else:
+            forward_dir = 1
+        else:  # Red attacks left
             attacking_team = self.red_team
             defending_team = self.green_team
-            forward_dir = -1  # Red attacks left
+            forward_dir = -1
 
         # Find last defender's x position (excluding GK)
         defenders_x = [p.x for p in defending_team if not p.is_goalkeeper]
         if not defenders_x:
             return
 
-        if forward_dir == 1:
-            last_defender_x = min(defenders_x)  # For green attacking right, last defender is the one with lowest x on red side
-            # Must be in opponent's half
-            for player in attacking_team:
-                if player is owner or player.is_goalkeeper:
-                    continue
-                if player.x > PITCH_WIDTH / 2 and player.x > last_defender_x:
-                    # Player is offside — award free kick to defending team
-                    self.game_state = GameState.FREE_KICK
-                    self.set_piece_team = 1 - owner.team
-                    self.set_piece_pos = (player.x, player.y)
-                    self.state_timer = 0
-                    if self.ball.owner:
-                        self.ball.owner.has_ball = False
-                    self.ball.owner = None
-                    self.ball.x = player.x
-                    self.ball.y = player.y
-                    self.ball.vx = 0
-                    self.ball.vy = 0
-                    return
-        else:
-            last_defender_x = max(defenders_x)
-            for player in attacking_team:
-                if player is owner or player.is_goalkeeper:
-                    continue
-                if player.x < PITCH_WIDTH / 2 and player.x < last_defender_x:
-                    self.game_state = GameState.FREE_KICK
-                    self.set_piece_team = 1 - owner.team
-                    self.set_piece_pos = (player.x, player.y)
-                    self.state_timer = 0
-                    if self.ball.owner:
-                        self.ball.owner.has_ball = False
-                    self.ball.owner = None
-                    self.ball.x = player.x
-                    self.ball.y = player.y
-                    self.ball.vx = 0
-                    self.ball.vy = 0
-                    return
+        last_defender_x = min(defenders_x) if forward_dir == 1 else max(defenders_x)
+
+        for attacker in attacking_team:
+            if attacker is kicker or attacker.is_goalkeeper:
+                continue
+
+            in_opp_half = attacker.x > PITCH_WIDTH / 2 if forward_dir == 1 else attacker.x < PITCH_WIDTH / 2
+            beyond_line = attacker.x > last_defender_x if forward_dir == 1 else attacker.x < last_defender_x
+
+            if in_opp_half and beyond_line:
+                # Player is offside — award free kick to defending team
+                self.game_state = GameState.FREE_KICK
+                self.set_piece_team = 1 - kicker.team
+                self.set_piece_pos = (attacker.x, attacker.y)
+                self.state_timer = 0
+                
+                if self.ball.owner:
+                    self.ball.owner.has_ball = False
+                self.ball.owner = None
+                self.ball.x = attacker.x
+                self.ball.y = attacker.y
+                self.ball.vx = 0
+                self.ball.vy = 0
+                return
 
     def _enforce_goalkeeper_restrictions(self):
         """Ensure goalkeepers only handle the ball inside their penalty box."""
