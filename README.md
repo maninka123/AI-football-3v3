@@ -40,16 +40,19 @@ Results: 11 passed, 0 failed out of 11 tests
 
 ```bash
 # 🎮 Train AND watch the agent play in a Pygame window
-python train.py --render --timesteps 2000000
+python train.py --render --timesteps 20000000
 
-# This trains the agent and **pops up a Pygame window every 20 episodes** so you can watch it improve.
+# 🚀 OPTIMAL LONG-TERM TRAINING: Train fast, log data to TensorBoard, and occasionally watch a match every 500 episodes
+python train.py --render --timesteps 20000000 --log --render_every 500
+
+# This trains the agent and pops up a Pygame window so you can watch it improve.
 # To resume training later, just add the `--resume` flag:
-# python train.py --resume --render --timesteps 2000000
+# python train.py --resume --render --timesteps 20000000 --log --render_every 500
 
 # Headless training (faster, no visuals)
-python train.py --timesteps 2000000 --log
+python train.py --timesteps 20000000 --log
 # To resume headless training later:
-# python train.py --resume --timesteps 2000000 --log
+# python train.py --resume --timesteps 20000000 --log
 ```
 
 ### 4. Watch Trained Agent Play
@@ -212,9 +215,9 @@ python play.py [OPTIONS]
 
 | Phase | Timesteps | What to Expect |
 |-------|-----------|----------------|
-| **Early** | 0–200K | Random movement, occasional accidental goals |
-| **Mid** | 200K–1M | Basic ball-chasing, some passing attempts |
-| **Late** | 1M–2M+ | Coordinated play, passing, goal-saving |
+| **Early** | 0–5M | Random movement, occasional accidental goals |
+| **Mid** | 5M–15M | Basic ball-chasing, some passing attempts |
+| **Late** | 15M–25M+ | Coordinated play, passing, goal-saving |
 
 > **Tip**: Run with `--render --render_every 50` to watch improvement over time without slowing training too much.
 
