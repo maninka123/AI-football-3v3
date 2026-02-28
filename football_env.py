@@ -583,8 +583,8 @@ class FootballEnv(gym.Env):
             # 2. Goalkeeper Save Detection
             # If GK picks up a fast-moving ball last kicked by the opponent
             if (closest_player.is_goalkeeper and self.ball.speed > 3.0 and
-                self.ball.last_touch_team != -1 and 
-                self.ball.last_touch_team != closest_player.team):
+                self.ball.last_kicker is not None and 
+                self.ball.last_kicker.team != closest_player.team):
                 
                 if closest_player.team == 0:
                     self.match_stats["green_saves"] += 1
@@ -621,7 +621,8 @@ class FootballEnv(gym.Env):
             # Once the ball is received, last_kicker should be cleared
             self.ball.last_kicker = None
             self.ball.kicked_from_x = 0.0
-            self.ball.second_last_touch_team = -1
+            # second_last_touch_team is preserved for assist logic until a goal or restart
+
 
     def _process_kicks(self, team, actions):
         """Process kick actions for a team."""
@@ -843,6 +844,10 @@ class FootballEnv(gym.Env):
 
         # End-line out (left or right) — not a goal
         if ball_x <= BALL_RADIUS:
+            # If it's inside the goal mouth, let _check_goals handle it
+            if GOAL_Y_TOP <= ball_y <= GOAL_Y_BOTTOM:
+                return
+            
             if last_touch == -1:
                 # Default: goal kick for green
                 self.game_state = GameState.GOAL_KICK
@@ -869,6 +874,10 @@ class FootballEnv(gym.Env):
             return
 
         if ball_x >= PITCH_WIDTH - BALL_RADIUS:
+            # If it's inside the goal mouth, let _check_goals handle it
+            if GOAL_Y_TOP <= ball_y <= GOAL_Y_BOTTOM:
+                return
+                
             if last_touch == -1:
                 # Default: goal kick for red
                 self.game_state = GameState.GOAL_KICK
