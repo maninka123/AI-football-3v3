@@ -870,7 +870,6 @@ class FootballEnv(gym.Env):
             return
 
         if ball_x >= PITCH_WIDTH - BALL_RADIUS:
-            self._clear_ball_context()
             if self.ball.last_touch_team == -1:
                 # Default: goal kick for red
                 self.game_state = GameState.GOAL_KICK
@@ -888,6 +887,7 @@ class FootballEnv(gym.Env):
                 self.set_piece_team = 1
                 self.set_piece_pos = (PITCH_WIDTH - GOAL_AREA_WIDTH, PITCH_HEIGHT / 2)
 
+            self._clear_ball_context()
             self.state_timer = 0
             for p in self.all_players:
                 p.vx = 0.0
@@ -995,7 +995,7 @@ class FootballEnv(gym.Env):
             self._place_players_restart(GameState.KICKOFF, self.kickoff_team, (PITCH_WIDTH/2, PITCH_HEIGHT/2))
             
             team = self.green_team if self.kickoff_team == 0 else self.red_team
-            taker = team[1]  # Player 1 usually takes kickoff
+            taker = self.np_random.choice(team[1:])  # Randomize outfield taker
             taker.x, taker.y = self.ball.x, self.ball.y
             taker.has_ball = True
             taker.cooldown = 10
@@ -1148,18 +1148,29 @@ class FootballEnv(gym.Env):
 
         # Own players' positions (normalized)
         for i, p in enumerate(own_team):
-            obs[i*2] = p.x / PITCH_WIDTH
+            if team == 0:
+                obs[i*2] = p.x / PITCH_WIDTH
+            else:
+                obs[i*2] = (PITCH_WIDTH - p.x) / PITCH_WIDTH
             obs[i*2 + 1] = p.y / PITCH_HEIGHT
 
         # Opponent players' positions (normalized)
         for i, p in enumerate(opp_team):
-            obs[6 + i*2] = p.x / PITCH_WIDTH
+            if team == 0:
+                obs[6 + i*2] = p.x / PITCH_WIDTH
+            else:
+                obs[6 + i*2] = (PITCH_WIDTH - p.x) / PITCH_WIDTH
             obs[6 + i*2 + 1] = p.y / PITCH_HEIGHT
 
         # Ball position and velocity (normalized)
-        obs[12] = self.ball.x / PITCH_WIDTH
+        if team == 0:
+            obs[12] = self.ball.x / PITCH_WIDTH
+            obs[14] = np.clip(self.ball.vx / BALL_MAX_SPEED, -1, 1) * 0.5 + 0.5
+        else:
+            obs[12] = (PITCH_WIDTH - self.ball.x) / PITCH_WIDTH
+            obs[14] = np.clip((-self.ball.vx) / BALL_MAX_SPEED, -1, 1) * 0.5 + 0.5
+            
         obs[13] = self.ball.y / PITCH_HEIGHT
-        obs[14] = np.clip(self.ball.vx / BALL_MAX_SPEED, -1, 1) * 0.5 + 0.5
         obs[15] = np.clip(self.ball.vy / BALL_MAX_SPEED, -1, 1) * 0.5 + 0.5
 
         # Scores (normalized by goals to win)
