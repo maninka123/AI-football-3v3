@@ -23,6 +23,7 @@ import copy
 import json
 import glob
 import numpy as np
+import torch
 import matplotlib
 matplotlib.use('TkAgg')  # Use interactive backend
 import matplotlib.pyplot as plt
@@ -147,8 +148,8 @@ class RewardLoggerCallback(BaseCallback):
                     total = max(self.episodes, 1)
                     print(f"\n📊 Episode {self.episodes}: {result} "
                           f"(Score G:{green} - R:{red})")
-                    print(f"   Canonical Win rate: {self.wins/total*100:.1f}% | "
-                          f"Wins: {self.wins} | Losses: {self.losses} | "
+                    print(f"   Device: {self.model.device} | Canonical Win rate: {self.wins/total*100:.1f}%")
+                    print(f"   Wins: {self.wins} | Losses: {self.losses} | "
                           f"Draws: {self.draws}")
 
         return True
@@ -621,6 +622,18 @@ def train(args):
     os.makedirs("checkpoints", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
 
+    # ---- DEVICE DETECTION ----
+    device = "cpu"
+    if torch.backends.mps.is_available():
+        device = "mps"
+    elif torch.cuda.is_available():
+        device = "cuda"
+    
+    print(f"\n🚀 Hardware Acceleration:")
+    print(f"   Detected best device: {device.upper()}")
+    if device == "cpu":
+        print("   (Note: No Mac GPU/MPS or NVIDIA CUDA found, using CPU)")
+
     # ---- RESUME LOGIC ----
     resumed = False
     prev_timesteps = 0
@@ -682,6 +695,7 @@ def train(args):
         model = PPO.load(
             checkpoint_path.replace(".zip", ""),
             env=env,
+            device=device,
             tensorboard_log="logs" if args.log else None,
         )
         # Update learning rate if changed
@@ -708,6 +722,7 @@ def train(args):
             tensorboard_log="logs" if args.log else None,
             verbose=1,
             seed=args.seed,
+            device=device,
         )
 
     print(f"\n🏗️  Model architecture:")
