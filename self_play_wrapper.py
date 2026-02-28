@@ -61,12 +61,10 @@ class SelfPlayWrapper(gym.Env):
             self.current_opponent = None
             
         # Get opponent's perspective (canonical frame)
-        raw_opp_obs = self.env._get_obs(team=opp_side)
-        self._opponent_obs = self._mirror_obs(raw_opp_obs) if opp_side == 1 else raw_opp_obs
+        self._opponent_obs = self.env._get_obs(team=opp_side)
         
         # Get learning agent's perspective (canonical frame)
-        raw_learning_obs = self.env._get_obs(team=self.learning_side)
-        final_obs = self._mirror_obs(raw_learning_obs) if self.learning_side == 1 else raw_learning_obs
+        final_obs = self.env._get_obs(team=self.learning_side)
             
         return final_obs, info
 
@@ -102,12 +100,10 @@ class SelfPlayWrapper(gym.Env):
             
         # 4. Update opponent observation for next step
         if not done and not truncated:
-            raw_opp_obs = self.env._get_obs(team=opp_side)
-            self._opponent_obs = self._mirror_obs(raw_opp_obs) if opp_side == 1 else raw_opp_obs
+            self._opponent_obs = self.env._get_obs(team=opp_side)
 
         # 5. Canonicalize learning agent's output observation
-        raw_learning_obs = self.env._get_obs(team=self.learning_side)
-        final_obs = self._mirror_obs(raw_learning_obs) if self.learning_side == 1 else raw_learning_obs
+        final_obs = self.env._get_obs(team=self.learning_side)
 
         # Phase 7: Expose learning side so train.py can track side-specific win rates
         info['learning_side'] = self.learning_side
