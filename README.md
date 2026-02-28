@@ -36,23 +36,36 @@ Expected output:
 Results: 11 passed, 0 failed out of 11 tests
 ```
 
-### 3. Train the Agent (with live visualization!)
+### 3. Train the Agent
 
+#### Quick Commands
 ```bash
-# 🎮 Train AND watch the agent play in a Pygame window
-python train.py --render --timesteps 20000000
+# 🔥 OPTIMAL FOR MAC: Fast training with live plots and TensorBoard logging
+python train.py --timesteps 20000000 --log --resume
 
-# 🚀 OPTIMAL LONG-TERM TRAINING: Train fast, log data to TensorBoard, and occasionally watch a match every 500 episodes
+# 🎮 VISUAL MODE: Occasionally watch a match every 500 episodes
 python train.py --render --timesteps 20000000 --log --render_every 500
+```
 
-# This trains the agent and pops up a Pygame window so you can watch it improve.
-# To resume training later, just add the `--resume` flag:
-# python train.py --resume --render --timesteps 20000000 --log --render_every 500
+#### Training Options
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--timesteps` | 2,000,000 | Total training steps |
+| `--resume` | off | Resume training from latest checkpoint |
+| `--device` | `cpu` | Training device (`cpu`, `mps`, `cuda`, `auto`) |
+| `--log` | off | Enable TensorBoard logging |
+| `--render` | off | Enable live Pygame visualization |
+| `--render_every` | 20 | Show match every N episodes |
+| `--render_speed` | 1.5 | Playback speed for visual matches |
+| `--lr` | 3e-4 | Learning rate |
+| `--batch_size` | 256 | Batch size |
+| `--selfplay_interval` | 50,000 | Steps between opponent updates |
 
-# Headless training (faster, no visuals)
-python train.py --timesteps 20000000 --log
-# To resume headless training later:
-# python train.py --resume --timesteps 20000000 --log
+#### Watching Progress with TensorBoard
+```bash
+# In an second terminal, run:
+tensorboard --logdir logs
+# Then open http://localhost:6006
 ```
 
 ### 4. Watch Trained Agent Play
@@ -160,34 +173,6 @@ Reinforcement learning/
 ├── README.md             # This file
 ├── checkpoints/          # Saved model checkpoints (created during training)
 └── logs/                 # TensorBoard logs (created with --log flag)
-```
-
----
-
-## ⚙️ Training Options
-
-```bash
-python train.py [OPTIONS]
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--timesteps` | 2,000,000 | Total training steps |
-| `--render` | off | Enable live Pygame visualization |
-| `--render_every` | 20 | Show match every N episodes |
-| `--render_speed` | 1.5 | Playback speed for visual matches |
-| `--lr` | 3e-4 | Learning rate |
-| `--batch_size` | 256 | Batch size |
-| `--selfplay_interval` | 50,000 | Steps between opponent updates |
-| `--log` | off | Enable TensorBoard logging |
-| `--seed` | 42 | Random seed |
-
-### Watching Training with TensorBoard
-
-```bash
-python train.py --timesteps 1000000 --log
-tensorboard --logdir logs
-# Open http://localhost:6006 in your browser
 ```
 
 ---
