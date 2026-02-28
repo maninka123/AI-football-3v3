@@ -1,6 +1,6 @@
-# ⚽ Football Simulator with Reinforcement Learning
+# ⚽ AI Football 3v3: Self-Play Reinforcement Learning
 
-A 3v3 football (soccer) simulator where AI agents learn to play football through **self-play reinforcement learning**. Two teams — **Green** and **Red** — each with 2 outfield players and 1 goalkeeper, compete on a scaled-down pitch. The agents learn to pass, shoot, defend, and save goals using PPO (Proximal Policy Optimization).
+A high-performance 3v3 football (soccer) simulator where AI agents learn to master the game through **self-play reinforcement learning**. Featuring a custom physics engine, realistic football rules, and a deep learning pipeline, this project demonstrates how complex team coordination can emerge from simple reward signals.
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue)
 ![Pygame](https://img.shields.io/badge/Pygame-2.5+-green)
@@ -68,6 +68,23 @@ python train.py --render --timesteps 20000000 --log --render_every 500
 | `--batch_size` | 256 | Batch size |
 | `--selfplay_interval` | 50,000 | Steps between opponent updates |
 
+#### 📊 Recommended Training Schedule
+
+| Phase | Timesteps | What to Expect |
+|-------|-----------|----------------|
+| **Early** | 0–5M | Random movement, occasional accidental goals |
+| **Mid** | 5M–15M | Basic ball-chasing, some passing attempts |
+| **Late** | 15M–25M+ | Coordinated play, passing, goal-saving |
+
+> **Tip**: Run with `--render --render_every 50` to watch improvement over time without slowing training too much.
+
+#### 📈 Live Training Analytics
+When you start training, a live Matplotlib dashboard will pop up, actively tracking **Canonical Win Rates**, **Goal Differentials**, and **Accumulated Rewards** over time.
+
+Crucially, because the agent plays symmetrically, the dashboard tracks the **Overall Learning Agent Win Rate** against the separate Physical side win rates (**Green vs Red**), allowing you to seamlessly detect side-bias anomalies.
+
+![Training Dashboard](Images/training_plots_v2.png)
+
 #### Watching Progress with TensorBoard
 ```bash
 # In an second terminal, run:
@@ -85,49 +102,45 @@ python play.py --model checkpoints/football_ppo_final --episodes 5
 python play.py
 ```
 
+#### 🎮 Viewer Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--model` | None | Path to trained model (random if not set) |
+| `--opponent_model` | None | Path to red team model |
+| `--episodes` | 3 | Number of matches |
+| `--speed` | 1.0 | Playback speed |
+| `--deterministic` | off | Less random action selection |
+
 ---
 
 ![Gameplay Snapshot](Images/playing.png)
 
-## 🏟️ Game Overview
+---
 
+## ⚽ The Simulation
+
+### 🏟️ Field & Mechanics
 | Feature | Details |
 |---------|---------|
 | **Teams** | Green (left) vs Red (right) |
 | **Players** | 2 outfield + 1 goalkeeper per side |
 | **Pitch** | 800×500 px scaled-down pitch |
 | **Win condition** | First team to score **2 goals** |
-| **Goalkeeper** | Team color jersey with **white stripes** |
+| **Goalkeeper** | Team color jersey with **white stripes** (restricted to own half) |
 
-### Controls & Actions (AI-controlled)
-Each player can perform 2 actions per step:
-- **Move**: 8 directions + stay still
-- **Kick/Pass**: 8 directions + no kick
-
----
-
-## 📋 Football Rules Implemented
-
-| Rule | How it works |
+### 📋 Football Rules Implemented
+| Rule | Implementation |
 |------|-------------|
-| **Kickoff** | Ball at center, alternates after each goal |
-| **Throw-in** | Ball crosses sideline → opposing team throws in |
-| **Goal kick** | Ball crosses end-line (by attacker) → GK kicks |
-| **Corner kick** | Ball crosses end-line (by defender) → attacker gets corner |
-| **Free kick** | Awarded after a foul, from foul location |
-| **Fouls** | Failed tackles may be called as fouls |
-| **Offside** | Attacker behind last defender when receiving in opponent's half |
-| **GK handling** | Goalkeeper can only hold ball in penalty box |
-| **GK movement** | Goalkeeper restricted to own half |
-| **Stamina** | Players tire when sprinting, recover when idle |
-| **Tackles** | Success depends on distance & stamina |
-| **Collisions** | Players physically push each other apart |
-| **Ball physics** | Friction, speed caps, realistic movement |
+| **Set Pieces** | Kickoffs, Throw-ins, Goal kicks, Corner kicks, and Free kicks |
+| **Gameplay** | Offsides, Fouls (tackles), Stamina/Sprinting, and Ball physics with friction |
+| **Goalkeeping** | Handling restricted to penalty box; automatic shot-saving logic |
 
 ---
 
-## 🤖 RL Architecture
+## 🧠 Intelligence & Learning
 
+### 🏗️ RL Architecture
 ```mermaid
 flowchart TD
     subgraph Training Loop
@@ -140,29 +153,20 @@ flowchart TD
     end
 ```
 
-- **Algorithm**: PPO with `[256, 256, 128]` networks
-- **Self-play (Opponent Pool)**: Saves the last 5 checkpoints and randomly samples an opponent every episode to prevent strategy cycling
-- **Observation**: 18D mirrored vector (player positions, ball, scores)
-- **Actions**: 6 discrete values (3 players × move + kick)
+- **Algorithm**: PPO (Proximal Policy Optimization) with `[256, 256, 128]` hidden layers.
+- **Self-play**: Randomized sampling from a pool of the last 5 checkpoints to ensure robust strategy emergence.
+- **Observations**: 18-dimensional mirrored vector (positions, velocities, ball state, and score).
 
-### Reward Signals
-| Signal | Value |
-|--------|-------|
-| Score a goal | +5.0 |
-| Concede a goal | -5.0 |
-| Win match | +10.0 |
-| Lose match | -10.0 |
-| Ball toward goal | +0.02 × progress |
-| Time penalty | -0.001/step |
-| Spacing penalty | -0.01/step (if players clump < 60px) |
-| Shot on target | +0.2 |
-| Shot quality (xG) | +0.5 × xG |
-| Successful Pass | +0.1 |
-| Progressive pass | +0.1 (added to base pass) |
-| Key pass | +0.2 (added to base pass) |
-| Turnover recovery / Interception | +0.2 (+0.3 extra if high press) |
-| Goalkeeper Save | +2.0 |
-| Assist Bonus | +1.5 |
+### 📈 Reward Signals (The Incentive System)
+| Action/State | Reward | Notes |
+|--------------|--------|-------|
+| **Scoring** | +5.0 / -5.0 | Primary goal incentive |
+| **Winning** | +10.0 / -10.0 | Episode termination bonus |
+| **Saves** | +2.0 | High priority for goalkeepers |
+| **Passing** | +0.1 to +0.3 | Bonus for progressive and key passes |
+| **Defending** | +0.2 | Rewarded for interceptions and high pressing |
+| **Ball Progress** | +0.02 × dist | Encourages movement toward goal |
+| **Positional** | -0.01/step | Spacing penalty for clumping (>60px) |
 
 ---
 
@@ -184,42 +188,17 @@ Reinforcement learning/
 
 ---
 
-## 🎮 Viewer Options
-
-```bash
-python play.py [OPTIONS]
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--model` | None | Path to trained model (random if not set) |
-| `--opponent_model` | None | Path to red team model |
-| `--episodes` | 3 | Number of matches |
-| `--speed` | 1.0 | Playback speed |
-| `--deterministic` | off | Less random action selection |
 
 ---
 
-## 📊 Recommended Training Schedule
+## 🛠️ Troubleshooting & Tips
 
-| Phase | Timesteps | What to Expect |
-|-------|-----------|----------------|
-| **Early** | 0–5M | Random movement, occasional accidental goals |
-| **Mid** | 5M–15M | Basic ball-chasing, some passing attempts |
-| **Late** | 15M–25M+ | Coordinated play, passing, goal-saving |
-
-> **Tip**: Run with `--render --render_every 50` to watch improvement over time without slowing training too much.
+- **GPU Acceleration**: If training is slow on Mac, ensure you specify `--device mps`. For Windows/Linux, use `--device cuda` or `auto`.
+- **Pygame Window**: If the Pygame window doesn't appear when using `--render`, ensure your terminal has permissions to display windows or try running in a windowed desktop environment.
+- **Training Stability**: If agents stop learning, try lowering the learning rate (`--lr 1e-4`) or check the Live Dashboard for "Reward Spikes" which may indicate side-bias.
+- **Performance**: For maximum training speed, run without `--render`. You can still watch progress via the Matplotlib dashboard and TensorBoard.
 
 ---
-
-## 📈 Live Training Analytics
-When you start training, a live Matplotlib dashboard will pop up, actively tracking **Canonical Win Rates**, **Goal Differentials**, and **Accumulated Rewards** over time.
-
-Crucially, because the agent plays symmetrically, the dashboard tracks the **Overall Learning Agent Win Rate** against the separate Physical side win rates (**Green vs Red**), allowing you to seamlessly detect side-bias anomalies.
-
-![Training Dashboard](Images/training_plots_v2.png)
-
-***
 
 <div align="center">
 
