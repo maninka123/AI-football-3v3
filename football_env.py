@@ -592,6 +592,15 @@ class FootballEnv(gym.Env):
                         turnover_value += 0.3
                     self._event_rewards -= turnover_value
 
+            # Give possession to closest player
+            self.ball.owner = closest_player
+            closest_player.has_ball = True
+            self.ball.last_touch_team = closest_player.team
+
+            # Once the ball is received, last_kicker should be cleared
+            self.ball.last_kicker = None
+            self.ball.kicked_from_x = 0.0
+
     def _process_kicks(self, team, actions):
         """Process kick actions for a team."""
         for i, player in enumerate(team):
@@ -1005,6 +1014,12 @@ class FootballEnv(gym.Env):
             own_players = self.red_team
             # Positive progress is moving left (decreasing x)
             ball_progress = (self.prev_ball_x - self.ball.x) / PITCH_WIDTH
+
+        # Dense shaping
+        # small time penalty
+        reward -= 0.001
+        # small ball progress (team 0 right, team 1 left)
+        reward += ball_progress * 0.02
 
         # Goal and Assist rewards
         if own_score > prev_own_score:
