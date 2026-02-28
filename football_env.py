@@ -519,10 +519,19 @@ class FootballEnv(gym.Env):
 
         # Handle approximate deflection ownership before pickup
         if self.ball.owner is None and self.ball.speed > 1.5:
-            for p in self.all_players:
-                if p.distance_to(self.ball.x, self.ball.y) < (PLAYER_RADIUS + BALL_RADIUS - 2):
-                    self.ball.last_touch_team = p.team
-                    break
+            allow_deflection_mark = True
+            if self.ball.last_kicker is not None:
+                if self.ball.last_kicker.distance_to(self.ball.x, self.ball.y) < PLAYER_KICK_RANGE:
+                    allow_deflection_mark = False
+
+            if allow_deflection_mark:
+                for p in self.all_players:
+                    # Teammates shouldn't "deflect" their own pass
+                    if self.ball.last_kicker is not None and p.team == self.ball.last_kicker.team:
+                        continue
+                    if p.distance_to(self.ball.x, self.ball.y) < (PLAYER_RADIUS + BALL_RADIUS - 2):
+                        self.ball.last_touch_team = p.team
+                        break
 
         closest_player = None
         closest_dist = float('inf')
@@ -725,6 +734,15 @@ class FootballEnv(gym.Env):
         self.ball.y = fouled_player.y
         self.ball.vx = 0
         self.ball.vy = 0
+        self.ball.last_touch_team = -1
+        self.ball.second_last_touch_team = -1
+        self.ball.last_kicker = None
+        self.ball.kicked_from_x = 0.0
+        
+        # Zero out player velocities for clean restart
+        for p in self.all_players:
+            p.vx = 0.0
+            p.vy = 0.0
 
     def _check_if_pass(self, player, direction, team):
         """Check if a kick direction would be a pass to a teammate."""
@@ -787,9 +805,15 @@ class FootballEnv(gym.Env):
 
         # Side-line out (top or bottom)
         if ball_y <= BALL_RADIUS or ball_y >= PITCH_HEIGHT - BALL_RADIUS:
-            # Throw-in for the team that didn't touch it last
+            # Side-line out -> Throw-in
+            # If no one touched it yet, default to team of nearest player
+            if self.ball.last_touch_team == -1:
+                nearest = min(self.all_players, key=lambda p: p.distance_to(ball_x, ball_y))
+                self.set_piece_team = nearest.team
+            else:
+                self.set_piece_team = 1 - self.ball.last_touch_team
+                
             self.game_state = GameState.THROW_IN
-            self.set_piece_team = 1 - self.ball.last_touch_team if self.ball.last_touch_team >= 0 else 0
             # Throw-in from where ball went out
             throw_x = np.clip(ball_x, 10, PITCH_WIDTH - 10)
             throw_y = BALL_RADIUS + 5 if ball_y <= BALL_RADIUS else PITCH_HEIGHT - BALL_RADIUS - 5
@@ -800,47 +824,72 @@ class FootballEnv(gym.Env):
             if self.ball.owner:
                 self.ball.owner.has_ball = False
             self.ball.owner = None
+            
+            # Zero out player velocities for clean restart
+            for p in self.all_players:
+                p.vx = 0.0
+                p.vy = 0.0
             return
 
         # End-line out (left or right) — not a goal
         if ball_x <= BALL_RADIUS:
-            if self.ball.last_touch_team == 0:
-                # Green touched last, goes behind green's goal → corner for red
+            if self.ball.last_touch_team == -1:
+                # Default: goal kick for green
+                self.game_state = GameState.GOAL_KICK
+                self.set_piece_team = 0
+                self.set_piece_pos = (GOAL_AREA_WIDTH, PITCH_HEIGHT / 2)
+            elif self.ball.last_touch_team == 0:
+                # Green touched last -> corner for red
                 self.game_state = GameState.CORNER_KICK
-                self.set_piece_team = 1  # Red gets corner
+                self.set_piece_team = 1
                 corner_y = BALL_RADIUS + 5 if ball_y < PITCH_HEIGHT / 2 else PITCH_HEIGHT - BALL_RADIUS - 5
                 self.set_piece_pos = (BALL_RADIUS + 5, corner_y)
             else:
-                # Red touched last → goal kick for green
+                # Red touched last -> goal kick for green
                 self.game_state = GameState.GOAL_KICK
-                self.set_piece_team = 0  # Green gets goal kick
+                self.set_piece_team = 0
                 self.set_piece_pos = (GOAL_AREA_WIDTH, PITCH_HEIGHT / 2)
+
             self.state_timer = 0
             self.ball.vx = 0
             self.ball.vy = 0
             if self.ball.owner:
                 self.ball.owner.has_ball = False
             self.ball.owner = None
+            
+            for p in self.all_players:
+                p.vx = 0.0
+                p.vy = 0.0
             return
 
         if ball_x >= PITCH_WIDTH - BALL_RADIUS:
-            if self.ball.last_touch_team == 1:
-                # Red touched last, goes behind red's goal → corner for green
+            if self.ball.last_touch_team == -1:
+                # Default: goal kick for red
+                self.game_state = GameState.GOAL_KICK
+                self.set_piece_team = 1
+                self.set_piece_pos = (PITCH_WIDTH - GOAL_AREA_WIDTH, PITCH_HEIGHT / 2)
+            elif self.ball.last_touch_team == 1:
+                # Red touched last -> corner for green
                 self.game_state = GameState.CORNER_KICK
-                self.set_piece_team = 0  # Green gets corner
+                self.set_piece_team = 0
                 corner_y = BALL_RADIUS + 5 if ball_y < PITCH_HEIGHT / 2 else PITCH_HEIGHT - BALL_RADIUS - 5
                 self.set_piece_pos = (PITCH_WIDTH - BALL_RADIUS - 5, corner_y)
             else:
-                # Green touched last → goal kick for red
+                # Green touched last -> goal kick for red
                 self.game_state = GameState.GOAL_KICK
-                self.set_piece_team = 1  # Red gets goal kick
+                self.set_piece_team = 1
                 self.set_piece_pos = (PITCH_WIDTH - GOAL_AREA_WIDTH, PITCH_HEIGHT / 2)
+
             self.state_timer = 0
             self.ball.vx = 0
             self.ball.vy = 0
             if self.ball.owner:
                 self.ball.owner.has_ball = False
             self.ball.owner = None
+
+            for p in self.all_players:
+                p.vx = 0.0
+                p.vy = 0.0
             return
 
     def _check_offside_on_kick(self, kicker, direction):
@@ -900,6 +949,15 @@ class FootballEnv(gym.Env):
                 self.ball.x, self.ball.y = self.set_piece_pos
                 self.ball.vx = 0
                 self.ball.vy = 0
+                self.ball.last_touch_team = -1
+                self.ball.second_last_touch_team = -1
+                self.ball.last_kicker = None
+                self.ball.kicked_from_x = 0.0
+                
+                # Zero out player velocities for clean restart
+                for p in self.all_players:
+                    p.vx = 0.0
+                    p.vy = 0.0
                 return
 
     def _enforce_goalkeeper_restrictions(self):
@@ -943,11 +1001,16 @@ class FootballEnv(gym.Env):
             # Find closest player of the set piece team
             team = self.green_team if self.set_piece_team == 0 else self.red_team
             closest = min(team[1:], key=lambda p: p.distance_to(self.ball.x, self.ball.y))
+            # Teleport nearest player to take the set piece (offset to avoid jitter)
             closest.x = self.ball.x
-            closest.y = self.ball.y
-            self.ball.owner = closest
+            closest.y = np.clip(self.ball.y + (10 if self.ball.y < PITCH_HEIGHT/2 else -10),
+                              PLAYER_RADIUS, PITCH_HEIGHT - PLAYER_RADIUS)
             closest.has_ball = True
+            closest.cooldown = 10
+            self.ball.owner = closest
             self.ball.last_touch_team = self.set_piece_team
+            self.ball.last_kicker = None
+            self.ball.kicked_from_x = 0.0
             self._place_players_restart(GameState.THROW_IN, self.set_piece_team, self.set_piece_pos)
 
         elif self.game_state == GameState.GOAL_KICK:
@@ -956,10 +1019,14 @@ class FootballEnv(gym.Env):
             team = self.green_team if self.set_piece_team == 0 else self.red_team
             gk = team[0]
             gk.x = self.ball.x
-            gk.y = self.ball.y
+            gk.y = self.ball.y  # GK stays on ball for goal kick is usually fine, but let's offset slightly for safety
+            gk.y = np.clip(self.ball.y + (5 if self.ball.y < PITCH_HEIGHT/2 else -5),
+                          PLAYER_RADIUS, PITCH_HEIGHT - PLAYER_RADIUS)
             self.ball.owner = gk
             gk.has_ball = True
             self.ball.last_touch_team = self.set_piece_team
+            self.ball.last_kicker = None
+            self.ball.kicked_from_x = 0.0
             self._place_players_restart(GameState.GOAL_KICK, self.set_piece_team, self.set_piece_pos)
 
         elif self.game_state == GameState.CORNER_KICK:
