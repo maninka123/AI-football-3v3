@@ -405,12 +405,14 @@ class FootballEnv(gym.Env):
             truncated = True
             self.done = True
 
-        # Compute reward for green team
+        # Compute reward for both teams
         self.truncated = truncated
-        reward = self._compute_reward()
+        green_reward = self._compute_reward(team=0)
+        red_reward = self._compute_reward(team=1)
         
-        # Add discrete event rewards and reset
-        reward += self._event_rewards
+        # Add discrete event rewards (which are tracked from Green's perspective)
+        green_reward += self._event_rewards
+        red_reward -= self._event_rewards
         self._event_rewards = 0.0
 
         # Update tracking
@@ -420,12 +422,17 @@ class FootballEnv(gym.Env):
 
         obs = self._get_obs(team=0)
         info = self._get_info()
+        
+        # Inject both rewards into info for wrapper to harvest
+        info['green_reward'] = green_reward
+        info['red_reward'] = red_reward
 
         # Render if needed
         if self.render_mode == "human":
             self.render()
 
-        return obs, reward, self.done, truncated, info
+        # By default we return Green's reward to SB3 (unless the wrapper swaps it)
+        return obs, green_reward, self.done, truncated, info
 
     def set_red_actions(self, action):
         """Set the red team's actions (called by self-play wrapper)."""
@@ -986,70 +993,77 @@ class FootballEnv(gym.Env):
                 # Recovers faster
                 player.stamina = min(1.0, player.stamina + 0.002)
 
-    def _compute_reward(self):
-        """Compute reward for the green team."""
+    def _compute_reward(self, team=0):
+        """Compute reward for the specified team (0=green, 1=red)."""
         reward = 0.0
 
+        if team == 0:
+            own_score = self.green_score
+            prev_own_score = self.prev_green_score
+            opp_score = self.red_score
+            prev_opp_score = self.prev_red_score
+            own_team_id = 0
+            opp_team_id = 1
+            own_players = self.green_team
+            # Positive progress is moving right (increasing x)
+            ball_progress = (self.ball.x - self.prev_ball_x) / PITCH_WIDTH
+        else:
+            own_score = self.red_score
+            prev_own_score = self.prev_red_score
+            opp_score = self.green_score
+            prev_opp_score = self.prev_green_score
+            own_team_id = 1
+            opp_team_id = 0
+            own_players = self.red_team
+            # Positive progress is moving left (decreasing x)
+            ball_progress = (self.prev_ball_x - self.ball.x) / PITCH_WIDTH
+
         # Goal and Assist rewards
-        if self.green_score > self.prev_green_score:
+        if own_score > prev_own_score:
             reward += 10.0
-            if self.ball.second_last_touch_team == 0:
+            if self.ball.second_last_touch_team == own_team_id:
                 reward += 3.0  # Assist bonus!
-        if self.red_score > self.prev_red_score:
+        if opp_score > prev_opp_score:
             reward -= 10.0
-            if self.ball.second_last_touch_team == 1:
+            if self.ball.second_last_touch_team == opp_team_id:
                 reward -= 3.0  # Opponent Assist penalty
 
         # Win/lose bonus
         if self.done:
-            # Reached goal limit
-            if self.green_score >= GOALS_TO_WIN:
+            if own_score >= GOALS_TO_WIN:
                 reward += 20.0
-            elif self.red_score >= GOALS_TO_WIN:
+            elif opp_score >= GOALS_TO_WIN:
                 reward -= 20.0
-            # Time ran out, check who has more goals
             elif getattr(self, "truncated", False):
-                if self.green_score > self.red_score:
-                    reward += 20.0  # Green wins on time
-                elif self.red_score > self.green_score:
-                    reward -= 20.0  # Red wins on time
+                if own_score > opp_score:
+                    reward += 20.0
+                elif opp_score > own_score:
+                    reward -= 20.0
 
-        # Ball progression toward opponent's goal (right side for green)
-        ball_progress = (self.ball.x - self.prev_ball_x) / PITCH_WIDTH
+        # Ball progression
         reward += ball_progress * 0.05
 
-        # Possession reward (only if also progressing)
-        if self.ball.owner is not None and self.ball.owner.team == 0:
+        # Possession reward
+        if self.ball.owner is not None and self.ball.owner.team == own_team_id:
             if ball_progress > 0:
                 reward += 0.005
 
-        # Block shot / clearance (If defending team clears ball traveling fast)
-        if (self.ball.owner is None and self.ball.speed > 3.0 and
-            self.ball.last_touch_team == 1 and self.ball.x < PITCH_WIDTH * 0.33):
-            # A green player is near the ball in defense
-            # Wait, this is handled better as a discrete event in _handle_ball_interactions
-            pass
-
-        # Time penalty (encourages faster play)
+        # Time penalty
         reward -= 0.002
 
-        # Spacing Penalty (discourage 'swarm' behavior)
-        # Calculate mean pairwise distance between the 3 outfield players on the green team
-        p1 = self.green_team[0] # GK
-        p2 = self.green_team[1] # Outfield 1
-        p3 = self.green_team[2] # Outfield 2
+        # Spacing Penalty
+        p1 = own_players[0]
+        p2 = own_players[1]
+        p3 = own_players[2]
         
-        # We only really care if the two outfield players are physically on top of each other, 
-        # or if they are sitting in the goalkeeper's lap.
         dist_12 = math.hypot(p1.x - p2.x, p1.y - p2.y)
         dist_13 = math.hypot(p1.x - p3.x, p1.y - p3.y)
         dist_23 = math.hypot(p2.x - p3.x, p2.y - p3.y)
         
         mean_spacing = (dist_12 + dist_13 + dist_23) / 3.0
         
-        # If players are too clumped (e.g. less than 80px apart on average)
         if mean_spacing < 80.0:
-            reward -= 0.01  # Small dense penalty for bad spacing
+            reward -= 0.01
 
         return reward
 

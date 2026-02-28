@@ -47,53 +47,69 @@ class SelfPlayWrapper(gym.Env):
         self._opponent_obs = None
 
     def reset(self, seed=None, options=None):
-        """Reset the environment and pick a new opponent."""
+        """Reset the environment, swap sides, and pick a new opponent."""
         obs, info = self.env.reset(seed=seed, options=options)
-        self._opponent_obs = self.env._get_obs(team=1)
         
+        # Phase 6: Canonical Frame. Randomly assign learning agent to Green(0) or Red(1)
+        self.learning_side = np.random.choice([0, 1])
+        opp_side = 1 - self.learning_side
+
         # Sample an opponent from the pool for this episode
         if self.opponent_pool:
             self.current_opponent = np.random.choice(self.opponent_pool)
         else:
             self.current_opponent = None
             
-        return obs, info
+        # Get opponent's perspective (canonical frame)
+        raw_opp_obs = self.env._get_obs(team=opp_side)
+        self._opponent_obs = self._mirror_obs(raw_opp_obs) if opp_side == 1 else raw_opp_obs
+        
+        # Get learning agent's perspective (canonical frame)
+        raw_learning_obs = self.env._get_obs(team=self.learning_side)
+        final_obs = self._mirror_obs(raw_learning_obs) if self.learning_side == 1 else raw_learning_obs
+            
+        return final_obs, info
 
     def step(self, action):
         """
         Step the environment.
-
-        action: green team's action (6 discrete values)
+        action: learning agent's action (canonical frame, expecting to attack right)
         """
-        # Get opponent (red team) action
-        red_action = self._get_opponent_action()
-        self.env.set_red_actions(red_action)
-
-        # Step the environment with green team's action
-        obs, reward, done, truncated, info = self.env.step(action)
-
-        # Update opponent observation for next step
-        if not done and not truncated:
-            self._opponent_obs = self.env._get_obs(team=1)
-
-        return obs, reward, done, truncated, info
-
-    def _get_opponent_action(self):
-        """Get action from the opponent policy."""
+        opp_side = 1 - self.learning_side
+        
+        # 1. Get opponent's canonical action (they also expect to attack right)
         if self.current_opponent is None or self._opponent_obs is None:
-            # Random opponent
-            return self.action_space.sample()
+            canonical_opp_action = self.action_space.sample()
+        else:
+            canonical_opp_action, _ = self.current_opponent.predict(self._opponent_obs, deterministic=True)
+            
+        # 2. De-canonicalize actions into physical left/right teams
+        physical_learning_action = self._mirror_action(action) if self.learning_side == 1 else action
+        physical_opp_action = self._mirror_action(canonical_opp_action) if opp_side == 1 else canonical_opp_action
+        
+        # 3. Route actions to the physical teams
+        if self.learning_side == 0:
+            # Learning = Green (Left), Opp = Red (Right)
+            self.env.set_red_actions(physical_opp_action)
+            _, _, done, truncated, info = self.env.step(physical_learning_action)
+            learning_reward = info['green_reward']
+        else:
+            # Learning = Red (Right), Opp = Green (Left)
+            # Physical game engine expects Green's action in `step()` and Red's in `set_red_actions()`
+            self.env.set_red_actions(physical_learning_action)
+            _, _, done, truncated, info = self.env.step(physical_opp_action)
+            learning_reward = info['red_reward']
+            
+        # 4. Update opponent observation for next step
+        if not done and not truncated:
+            raw_opp_obs = self.env._get_obs(team=opp_side)
+            self._opponent_obs = self._mirror_obs(raw_opp_obs) if opp_side == 1 else raw_opp_obs
 
-        # Mirror the observation so the opponent sees the field from its own perspective
-        obs = self._mirror_obs(self._opponent_obs)
+        # 5. Canonicalize learning agent's output observation
+        raw_learning_obs = self.env._get_obs(team=self.learning_side)
+        final_obs = self._mirror_obs(raw_learning_obs) if self.learning_side == 1 else raw_learning_obs
 
-        # Use deterministic=True for a more stable learning signal
-        action, _ = self.current_opponent.predict(obs, deterministic=True)
-
-        # Mirror the action directions for player movement and kicks
-        # Since red team attacks left, we need to mirror horizontal directions
-        mirrored_action = self._mirror_action(action)
-        return mirrored_action
+        return final_obs, learning_reward, done, truncated, info
 
     def _mirror_obs(self, obs):
         """Mirror the observation left-right for the opponent perspective."""
