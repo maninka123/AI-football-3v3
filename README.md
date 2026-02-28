@@ -121,8 +121,8 @@ flowchart TD
 ```
 
 - **Algorithm**: PPO with `[256, 256, 128]` networks
-- **Self-play**: Opponent updated every 50K steps with frozen copy
-- **Observation**: 18D vector (player positions, ball, scores)
+- **Self-play (Opponent Pool)**: Saves the last 5 checkpoints and randomly samples an opponent every episode to prevent strategy cycling
+- **Observation**: 18D mirrored vector (player positions, ball, scores)
 - **Actions**: 6 discrete values (3 players × move + kick)
 
 ### Reward Signals
@@ -137,6 +137,7 @@ flowchart TD
 | Shot on target | +1.0 |
 | Shot quality (xG) | +2.0 × xG |
 | Time penalty | -0.002/step |
+| Spacing penalty | -0.01/step (if players clump < 80px) |
 | Successful Pass | +0.1 |
 | Pass that advances play | +0.2 (extra if forward or breaks a line) |
 | Key pass | +0.5 |
