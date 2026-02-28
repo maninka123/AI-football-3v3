@@ -376,7 +376,11 @@ class FootballEnv(gym.Env):
 
             # 3. Process kicks
             self._process_kicks(self.green_team, green_actions)
-            self._process_kicks(self.red_team, red_actions)
+            if self.game_state != GameState.PLAYING:
+                self.ball.vx = 0
+                self.ball.vy = 0
+            else:
+                self._process_kicks(self.red_team, red_actions)
 
             # 4. Update ball physics
             self.ball.update()
@@ -526,7 +530,7 @@ class FootballEnv(gym.Env):
             # Check if goalkeeper is handling outside box
             if closest_player.is_goalkeeper and not self._is_in_penalty_box(closest_player):
                 # GK can still use feet outside box, but no handling
-                pass
+                return
 
             # 1. Successful Pass Detection
             if (self.ball.last_kicker is not None and 
@@ -853,7 +857,7 @@ class FootballEnv(gym.Env):
         if not defenders_x:
             return
 
-        last_defender_x = min(defenders_x) if forward_dir == 1 else max(defenders_x)
+        last_defender_x = max(defenders_x) if forward_dir == 1 else min(defenders_x)
 
         for attacker in attacking_team:
             if attacker is kicker or attacker.is_goalkeeper:
@@ -861,19 +865,19 @@ class FootballEnv(gym.Env):
 
             in_opp_half = attacker.x > PITCH_WIDTH / 2 if forward_dir == 1 else attacker.x < PITCH_WIDTH / 2
             beyond_line = attacker.x > last_defender_x if forward_dir == 1 else attacker.x < last_defender_x
+            ahead_of_ball = attacker.x > kicker.x if forward_dir == 1 else attacker.x < kicker.x
 
-            if in_opp_half and beyond_line:
+            if in_opp_half and beyond_line and ahead_of_ball:
                 # Player is offside — award free kick to defending team
                 self.game_state = GameState.FREE_KICK
                 self.set_piece_team = 1 - kicker.team
-                self.set_piece_pos = (attacker.x, attacker.y)
+                self.set_piece_pos = (kicker.x, kicker.y)
                 self.state_timer = 0
                 
                 if self.ball.owner:
                     self.ball.owner.has_ball = False
                 self.ball.owner = None
-                self.ball.x = attacker.x
-                self.ball.y = attacker.y
+                self.ball.x, self.ball.y = self.set_piece_pos
                 self.ball.vx = 0
                 self.ball.vy = 0
                 return
