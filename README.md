@@ -19,6 +19,13 @@ cd "Reinforcement learning"
 
 # Install all required packages
 pip install -r requirements.txt
+
+# (Optional) Activate the virtual environment
+# On macOS/Linux:
+source .venv/bin/activate
+
+# On Windows (PowerShell):
+.\.venv\Scripts\Activate.ps1
 ```
 
 ### 2. Run the Rule Tests (verify everything works)
