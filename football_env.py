@@ -621,6 +621,7 @@ class FootballEnv(gym.Env):
             # Once the ball is received, last_kicker should be cleared
             self.ball.last_kicker = None
             self.ball.kicked_from_x = 0.0
+            self.ball.second_last_touch_team = -1
 
     def _process_kicks(self, team, actions):
         """Process kick actions for a team."""
@@ -789,11 +790,24 @@ class FootballEnv(gym.Env):
         self.game_state = GameState.KICKOFF
         # Kickoff goes to the team that conceded
         self.kickoff_team = 1 - scoring_team
-        self.state_timer = 0
+        self.state_timer = 0  # Start from 0 to allow pause up to 15
 
-        # Reset positions
-        self.ball.reset()
-        self._place_players_kickoff()
+        # Zero out player velocities for clean restart
+        for p in self.all_players:
+            p.vx = 0.0
+            p.vy = 0.0
+
+    def _clear_ball_context(self):
+        """Reset ball ownership and pass/kick context for a clean restart."""
+        self.ball.last_touch_team = -1
+        self.ball.second_last_touch_team = -1
+        self.ball.last_kicker = None
+        self.ball.kicked_from_x = 0.0
+        self.ball.vx = 0
+        self.ball.vy = 0
+        if self.ball.owner:
+            self.ball.owner.has_ball = False
+        self.ball.owner = None
 
     def _check_out_of_bounds(self):
         """Check if ball has gone out of bounds and handle restarts."""
@@ -813,17 +827,14 @@ class FootballEnv(gym.Env):
             else:
                 self.set_piece_team = 1 - self.ball.last_touch_team
                 
+            self._clear_ball_context()
             self.game_state = GameState.THROW_IN
             # Throw-in from where ball went out
             throw_x = np.clip(ball_x, 10, PITCH_WIDTH - 10)
             throw_y = BALL_RADIUS + 5 if ball_y <= BALL_RADIUS else PITCH_HEIGHT - BALL_RADIUS - 5
             self.set_piece_pos = (throw_x, throw_y)
+            self.set_piece_team = self.set_piece_team # redundant but explicit
             self.state_timer = 0
-            self.ball.vx = 0
-            self.ball.vy = 0
-            if self.ball.owner:
-                self.ball.owner.has_ball = False
-            self.ball.owner = None
             
             # Zero out player velocities for clean restart
             for p in self.all_players:
@@ -850,19 +861,16 @@ class FootballEnv(gym.Env):
                 self.set_piece_team = 0
                 self.set_piece_pos = (GOAL_AREA_WIDTH, PITCH_HEIGHT / 2)
 
+            self._clear_ball_context()
             self.state_timer = 0
-            self.ball.vx = 0
-            self.ball.vy = 0
-            if self.ball.owner:
-                self.ball.owner.has_ball = False
-            self.ball.owner = None
-            
+            # Zero out player velocities for clean restart
             for p in self.all_players:
                 p.vx = 0.0
                 p.vy = 0.0
             return
 
         if ball_x >= PITCH_WIDTH - BALL_RADIUS:
+            self._clear_ball_context()
             if self.ball.last_touch_team == -1:
                 # Default: goal kick for red
                 self.game_state = GameState.GOAL_KICK
@@ -881,12 +889,6 @@ class FootballEnv(gym.Env):
                 self.set_piece_pos = (PITCH_WIDTH - GOAL_AREA_WIDTH, PITCH_HEIGHT / 2)
 
             self.state_timer = 0
-            self.ball.vx = 0
-            self.ball.vy = 0
-            if self.ball.owner:
-                self.ball.owner.has_ball = False
-            self.ball.owner = None
-
             for p in self.all_players:
                 p.vx = 0.0
                 p.vy = 0.0
@@ -986,14 +988,18 @@ class FootballEnv(gym.Env):
 
     def _execute_set_piece(self):
         """Execute the current set piece (kickoff, throw-in, etc.)."""
+        self._clear_ball_context()
         if self.game_state == GameState.KICKOFF:
             self.ball.reset()
             self._place_players_kickoff()
-            # Give ball to kickoff team's closest outfield player
+            self._place_players_restart(GameState.KICKOFF, self.kickoff_team, (PITCH_WIDTH/2, PITCH_HEIGHT/2))
+            
             team = self.green_team if self.kickoff_team == 0 else self.red_team
-            # Player 1 takes kickoff
-            self.ball.owner = team[1]
-            team[1].has_ball = True
+            taker = team[1]  # Player 1 usually takes kickoff
+            taker.x, taker.y = self.ball.x, self.ball.y
+            taker.has_ball = True
+            taker.cooldown = 10
+            self.ball.owner = taker
             self.ball.last_touch_team = self.kickoff_team
 
         elif self.game_state == GameState.THROW_IN:
@@ -1001,16 +1007,12 @@ class FootballEnv(gym.Env):
             # Find closest player of the set piece team
             team = self.green_team if self.set_piece_team == 0 else self.red_team
             closest = min(team[1:], key=lambda p: p.distance_to(self.ball.x, self.ball.y))
-            # Teleport nearest player to take the set piece (offset to avoid jitter)
-            closest.x = self.ball.x
-            closest.y = np.clip(self.ball.y + (10 if self.ball.y < PITCH_HEIGHT/2 else -10),
-                              PLAYER_RADIUS, PITCH_HEIGHT - PLAYER_RADIUS)
+            # Teleport nearest player to take the set piece
+            closest.x, closest.y = self.ball.x, self.ball.y
             closest.has_ball = True
             closest.cooldown = 10
             self.ball.owner = closest
             self.ball.last_touch_team = self.set_piece_team
-            self.ball.last_kicker = None
-            self.ball.kicked_from_x = 0.0
             self._place_players_restart(GameState.THROW_IN, self.set_piece_team, self.set_piece_pos)
 
         elif self.game_state == GameState.GOAL_KICK:
@@ -1018,15 +1020,11 @@ class FootballEnv(gym.Env):
             # Goalkeeper takes goal kick
             team = self.green_team if self.set_piece_team == 0 else self.red_team
             gk = team[0]
-            gk.x = self.ball.x
-            gk.y = self.ball.y  # GK stays on ball for goal kick is usually fine, but let's offset slightly for safety
-            gk.y = np.clip(self.ball.y + (5 if self.ball.y < PITCH_HEIGHT/2 else -5),
-                          PLAYER_RADIUS, PITCH_HEIGHT - PLAYER_RADIUS)
+            gk.x, gk.y = self.ball.x, self.ball.y
             self.ball.owner = gk
             gk.has_ball = True
+            gk.cooldown = 10
             self.ball.last_touch_team = self.set_piece_team
-            self.ball.last_kicker = None
-            self.ball.kicked_from_x = 0.0
             self._place_players_restart(GameState.GOAL_KICK, self.set_piece_team, self.set_piece_pos)
 
         elif self.game_state == GameState.CORNER_KICK:
@@ -1034,10 +1032,10 @@ class FootballEnv(gym.Env):
             team = self.green_team if self.set_piece_team == 0 else self.red_team
             # Outfield player takes corner
             closest = min(team[1:], key=lambda p: p.distance_to(self.ball.x, self.ball.y))
-            closest.x = self.ball.x
-            closest.y = self.ball.y
-            self.ball.owner = closest
+            closest.x, closest.y = self.ball.x, self.ball.y
             closest.has_ball = True
+            closest.cooldown = 10
+            self.ball.owner = closest
             self.ball.last_touch_team = self.set_piece_team
             self._place_players_restart(GameState.CORNER_KICK, self.set_piece_team, self.set_piece_pos)
 
@@ -1045,10 +1043,10 @@ class FootballEnv(gym.Env):
             self.ball.x, self.ball.y = self.set_piece_pos
             team = self.green_team if self.set_piece_team == 0 else self.red_team
             closest = min(team[1:], key=lambda p: p.distance_to(self.ball.x, self.ball.y))
-            closest.x = self.ball.x
-            closest.y = self.ball.y
-            self.ball.owner = closest
+            closest.x, closest.y = self.ball.x, self.ball.y
             closest.has_ball = True
+            closest.cooldown = 10
+            self.ball.owner = closest
             self.ball.last_touch_team = self.set_piece_team
             self._place_players_restart(GameState.FREE_KICK, self.set_piece_team, self.set_piece_pos)
 
