@@ -518,9 +518,9 @@ class FootballEnv(gym.Env):
             return
 
         # Handle approximate deflection ownership before pickup
-        if self.ball.owner is None:
+        if self.ball.owner is None and self.ball.speed > 1.5:
             for p in self.all_players:
-                if p.distance_to(self.ball.x, self.ball.y) < (PLAYER_RADIUS + BALL_RADIUS + 2):
+                if p.distance_to(self.ball.x, self.ball.y) < (PLAYER_RADIUS + BALL_RADIUS - 2):
                     self.ball.last_touch_team = p.team
                     break
 
@@ -883,12 +883,15 @@ class FootballEnv(gym.Env):
                 to_att = np.array([dx / dist, dy / dist])
                 if to_att[0] * direction[0] + to_att[1] * direction[1] < 0.5:
                     continue
+            else:
+                # Kicker and attacker are effectively on top of each other
+                continue
 
             if in_opp_half and beyond_line and ahead_of_ball:
                 # Player is offside — award free kick to defending team
                 self.game_state = GameState.FREE_KICK
                 self.set_piece_team = 1 - kicker.team
-                self.set_piece_pos = (kicker.x, kicker.y)
+                self.set_piece_pos = (attacker.x, attacker.y)
                 self.state_timer = 0
                 
                 if self.ball.owner:
