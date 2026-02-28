@@ -64,7 +64,7 @@ python play.py
 
 ---
 
-![Gameplay Snapshot](images/playing.png)
+![Gameplay Snapshot](Images/playing.png)
 
 ## 🏟️ Game Overview
 
