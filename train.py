@@ -623,16 +623,21 @@ def train(args):
     os.makedirs("logs", exist_ok=True)
 
     # ---- DEVICE DETECTION ----
-    device = "cpu"
-    if torch.backends.mps.is_available():
-        device = "mps"
-    elif torch.cuda.is_available():
-        device = "cuda"
+    device = args.device
+    if device == "auto":
+        if torch.backends.mps.is_available():
+            device = "mps"
+        elif torch.cuda.is_available():
+            device = "cuda"
+        else:
+            device = "cpu"
     
-    print(f"\n🚀 Hardware Acceleration:")
-    print(f"   Detected best device: {device.upper()}")
-    if device == "cpu":
-        print("   (Note: No Mac GPU/MPS or NVIDIA CUDA found, using CPU)")
+    print(f"\n🚀 Training Device:")
+    print(f"   Selected device: {device.upper()}")
+    if device != "cpu":
+        print(f"   (Using hardware acceleration via {device.upper()})")
+    else:
+        print("   (Using CPU - optimized for small models and physics speed)")
 
     # ---- RESUME LOGIC ----
     resumed = False
@@ -852,6 +857,9 @@ if __name__ == "__main__":
                         help="Disable live training plots")
     parser.add_argument("--plot_every", type=int, default=5,
                         help="Update plots every N episodes (default: 5)")
+    parser.add_argument("--device", type=str, default="cpu",
+                        choices=["cpu", "cuda", "mps", "auto"],
+                        help="Training device (default: cpu for speed, or use 'mps'/'cuda')")
     parser.add_argument("--resume", action="store_true",
                         help="Resume training from latest checkpoint")
     args = parser.parse_args()
