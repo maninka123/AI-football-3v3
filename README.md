@@ -128,25 +128,21 @@ flowchart TD
 ### Reward Signals
 | Signal | Value |
 |--------|-------|
-| Score a goal | +10 |
-| Concede a goal | -10 |
-| Win match | +20 |
-| Lose match | -20 |
-| Ball toward goal | +0.05 × progress |
-| Possession | +0.005/step (only if also progressing) |
-| Shot on target | +1.0 |
-| Shot quality (xG) | +2.0 × xG |
-| Time penalty | -0.002/step |
-| Spacing penalty | -0.01/step (if players clump < 80px) |
+| Score a goal | +5.0 |
+| Concede a goal | -5.0 |
+| Win match | +10.0 |
+| Lose match | -10.0 |
+| Ball toward goal | +0.02 × progress |
+| Time penalty | -0.001/step |
+| Spacing penalty | -0.01/step (if players clump < 60px) |
+| Shot on target | +0.2 |
+| Shot quality (xG) | +0.5 × xG |
 | Successful Pass | +0.1 |
-| Pass that advances play | +0.2 (extra if forward or breaks a line) |
-| Key pass | +0.5 |
-| Lose possession | -0.5 |
-| Turnover in defensive third | -1.0 |
-| Tackle won / interception | +0.3 |
-| Block shot / clearance | +0.2 |
+| Progressive pass | +0.1 (added to base pass) |
+| Key pass | +0.2 (added to base pass) |
+| Turnover recovery / Interception | +0.2 (+0.3 extra if high press) |
 | Goalkeeper Save | +2.0 |
-| Assist Bonus | +3.0 |
+| Assist Bonus | +1.5 |
 
 ---
 
