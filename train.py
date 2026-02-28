@@ -103,9 +103,9 @@ class RewardLoggerCallback(BaseCallback):
     def __init__(self, verbose=1):
         super().__init__(verbose)
         self.episode_rewards = []
-        self.wins = 0
-        self.losses = 0
-        self.draws = 0
+        self.wins = 0      # Canonical wins
+        self.losses = 0    # Canonical losses
+        self.draws = 0     # Canonical draws
         self.episodes = 0
 
     def _on_step(self) -> bool:
@@ -116,22 +116,38 @@ class RewardLoggerCallback(BaseCallback):
                 self.episodes += 1
                 green = info["green_score"]
                 red = info["red_score"]
+                learning_side = info.get("learning_side", 0)
 
-                if green >= 2:
-                    self.wins += 1
-                    result = "🏆 WIN"
-                elif red >= 2:
-                    self.losses += 1
-                    result = "❌ LOSS"
-                else:
-                    self.draws += 1
-                    result = "🤝 DRAW"
+                green_won = green >= 2
+                red_won = red >= 2
+
+                # Calculate canonical (learning agent) result
+                if learning_side == 0:  # Agent is Green
+                    if green_won:
+                        self.wins += 1
+                        result = "🏆 WIN (as Green)"
+                    elif red_won:
+                        self.losses += 1
+                        result = "❌ LOSS (as Green)"
+                    else:
+                        self.draws += 1
+                        result = "🤝 DRAW (as Green)"
+                else:  # Agent is Red
+                    if red_won:
+                        self.wins += 1
+                        result = "🏆 WIN (as Red)"
+                    elif green_won:
+                        self.losses += 1
+                        result = "❌ LOSS (as Red)"
+                    else:
+                        self.draws += 1
+                        result = "🤝 DRAW (as Red)"
 
                 if self.episodes % 50 == 0 and self.verbose:
                     total = max(self.episodes, 1)
                     print(f"\n📊 Episode {self.episodes}: {result} "
-                          f"(Score: {green}-{red})")
-                    print(f"   Win rate: {self.wins/total*100:.1f}% | "
+                          f"(Score G:{green} - R:{red})")
+                    print(f"   Canonical Win rate: {self.wins/total*100:.1f}% | "
                           f"Wins: {self.wins} | Losses: {self.losses} | "
                           f"Draws: {self.draws}")
 
@@ -156,12 +172,25 @@ class LivePlotCallback(BaseCallback):
         # Data storage
         self.episode_rewards = []
         self.episode_lengths = []
-        self.win_rates = []
+        
+        # Phase 7: Canonical and Side-Specific Trackers
+        self.overall_win_rates = []
+        self.green_win_rates = []
+        self.red_win_rates = []
+        
         self.green_goals_history = []
         self.red_goals_history = []
-        self.cumulative_wins = 0
-        self.cumulative_losses = 0
-        self.cumulative_draws = 0
+        
+        # Cumulative Canonical metrics (Learning Agent)
+        self.learning_wins = 0
+        self.learning_losses = 0
+        self.learning_draws = 0
+        
+        # Cumulative Physical metrics
+        self.green_wins = 0
+        self.green_games = 0
+        self.red_wins = 0
+        self.red_games = 0
 
         # Current episode tracking
         self._current_reward = 0.0
@@ -239,23 +268,44 @@ class LivePlotCallback(BaseCallback):
                 self.episodes += 1
                 green = info['green_score']
                 red = info['red_score']
+                learning_side = info.get('learning_side', 0)
 
                 # Store data
                 self.episode_rewards.append(self._current_reward)
                 self.green_goals_history.append(green)
                 self.red_goals_history.append(red)
 
-                # Track wins
-                if green >= 2:
-                    self.cumulative_wins += 1
-                elif red >= 2:
-                    self.cumulative_losses += 1
-                else:
-                    self.cumulative_draws += 1
+                # Determine who won
+                green_won = green >= 2
+                red_won = red >= 2
+                
+                # Update physical side metrics
+                self.green_games += 1
+                self.red_games += 1
+                if green_won:
+                    self.green_wins += 1
+                if red_won:
+                    self.red_wins += 1
+                    
+                # Update canonical learning metrics
+                if learning_side == 0:  # Learning agent is green
+                    if green_won: self.learning_wins += 1
+                    elif red_won: self.learning_losses += 1
+                    else: self.learning_draws += 1
+                else:  # Learning agent is red
+                    if red_won: self.learning_wins += 1
+                    elif green_won: self.learning_losses += 1
+                    else: self.learning_draws += 1
 
-                total = self.cumulative_wins + self.cumulative_losses + self.cumulative_draws
-                win_rate = (self.cumulative_wins / total * 100) if total > 0 else 0
-                self.win_rates.append(win_rate)
+                # Calculate ratios
+                total = self.learning_wins + self.learning_losses + self.learning_draws
+                overall_wr = (self.learning_wins / total * 100) if total > 0 else 0
+                green_wr = (self.green_wins / self.green_games * 100) if self.green_games > 0 else 0
+                red_wr = (self.red_wins / self.red_games * 100) if self.red_games > 0 else 0
+                
+                self.overall_win_rates.append(overall_wr)
+                self.green_win_rates.append(green_wr)
+                self.red_win_rates.append(red_wr)
 
                 # Reset episode reward
                 self._current_reward = 0.0
@@ -313,12 +363,19 @@ class LivePlotCallback(BaseCallback):
         ax2.clear()
         ax2.set_facecolor(c['panel'])
         ax2.grid(True, alpha=0.8, color=c['grid'])
-        ax2.set_title('Win Rate Over Time', color=c['text'],
+        ax2.set_title('Win Rate Over Time (Symmetric Tracking)', color=c['text'],
                        fontsize=11, fontweight='bold', pad=8)
 
-        ax2.fill_between(episodes_x, self.win_rates, alpha=0.3, color=c['green'])
-        ax2.plot(episodes_x, self.win_rates, color=c['green'],
-                 linewidth=2, label='Win Rate')
+        # Plot components
+        ax2.fill_between(episodes_x, self.overall_win_rates, alpha=0.15, color=c['blue'])
+        ax2.plot(episodes_x, self.overall_win_rates, color=c['blue'],
+                 linewidth=2.5, label='Overall (Learning Agent)')
+                 
+        ax2.plot(episodes_x, self.green_win_rates, color=c['green'],
+                 linewidth=1.2, linestyle=':', label='Green Side')
+                 
+        ax2.plot(episodes_x, self.red_win_rates, color=c['red'],
+                 linewidth=1.2, linestyle=':', label='Red Side')
 
         # 50% reference line
         ax2.axhline(y=50, color=c['gray'], linestyle='--', alpha=0.5, linewidth=1)
@@ -326,12 +383,15 @@ class LivePlotCallback(BaseCallback):
                  fontsize=8, alpha=0.7)
 
         # Current stats annotation
-        total = self.cumulative_wins + self.cumulative_losses + self.cumulative_draws
-        stats_text = (f'W:{self.cumulative_wins}  L:{self.cumulative_losses}  '
-                      f'D:{self.cumulative_draws}')
+        stats_text = (f'Canonical W:{self.learning_wins}  L:{self.learning_losses}  '
+                      f'D:{self.learning_draws}\n'
+                      f'G-WR: {self.green_win_rates[-1]:.1f}% | R-WR: {self.red_win_rates[-1]:.1f}%')
         ax2.text(0.98, 0.95, stats_text, transform=ax2.transAxes,
                  fontsize=9, color=c['text'], ha='right', va='top',
                  bbox=dict(boxstyle='round,pad=0.3', facecolor=c['bg'], edgecolor=c['grid'], alpha=0.9))
+                 
+        ax2.legend(loc='lower right', fontsize=8, facecolor=c['panel'],
+                   edgecolor=c['grid'], labelcolor=c['text'])
 
         ax2.set_ylim(-5, 105)
         ax2.set_xlabel('Episode', color=c['gray'], fontsize=9)

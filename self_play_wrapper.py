@@ -109,6 +109,9 @@ class SelfPlayWrapper(gym.Env):
         raw_learning_obs = self.env._get_obs(team=self.learning_side)
         final_obs = self._mirror_obs(raw_learning_obs) if self.learning_side == 1 else raw_learning_obs
 
+        # Phase 7: Expose learning side so train.py can track side-specific win rates
+        info['learning_side'] = self.learning_side
+
         return final_obs, learning_reward, done, truncated, info
 
     def _mirror_obs(self, obs):

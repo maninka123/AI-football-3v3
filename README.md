@@ -225,9 +225,11 @@ python play.py [OPTIONS]
 ---
 
 ## 📈 Live Training Analytics
-When you start training, a live Matplotlib dashboard will pop up, actively tracking **Win Rates**, **Goal Differentials**, and **Accumulated Rewards** over time.
+When you start training, a live Matplotlib dashboard will pop up, actively tracking **Canonical Win Rates**, **Goal Differentials**, and **Accumulated Rewards** over time.
 
-![Training Dashboard](Images/training_plots.png)
+Crucially, because the agent plays symmetrically, the dashboard tracks the **Overall Learning Agent Win Rate** against the separate Physical side win rates (**Green vs Red**), allowing you to seamlessly detect side-bias anomalies.
+
+![Training Dashboard](Images/training_plots_v2.png)
 
 ***
 
