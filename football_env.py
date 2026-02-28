@@ -360,6 +360,8 @@ class FootballEnv(gym.Env):
 
         # Handle set piece states
         if self.game_state != GameState.PLAYING:
+            self._update_cooldowns()
+            self._update_stamina()
             self.state_timer += 1
             if self.state_timer >= 15:  # Brief pause before restart
                 self._execute_set_piece()
@@ -515,23 +517,30 @@ class FootballEnv(gym.Env):
         if self.ball.owner is not None:
             return
 
+        # Handle approximate deflection ownership before pickup
+        if self.ball.owner is None:
+            for p in self.all_players:
+                if p.distance_to(self.ball.x, self.ball.y) < (PLAYER_RADIUS + BALL_RADIUS + 2):
+                    self.ball.last_touch_team = p.team
+                    break
+
         closest_player = None
         closest_dist = float('inf')
 
         for player in self.all_players:
             if player.cooldown > 0:
                 continue
+            # Check if goalkeeper is trying to handle ball outside the box
+            if player.is_goalkeeper and not self._is_in_penalty_box(player):
+                # GK can still use feet outside box, but no handling possession
+                continue
+                
             dist = player.distance_to(self.ball.x, self.ball.y)
             if dist < PLAYER_KICK_RANGE and dist < closest_dist:
                 closest_dist = dist
                 closest_player = player
 
         if closest_player is not None:
-            # Check if goalkeeper is handling outside box
-            if closest_player.is_goalkeeper and not self._is_in_penalty_box(closest_player):
-                # GK can still use feet outside box, but no handling
-                return
-
             # 1. Successful Pass Detection
             if (self.ball.last_kicker is not None and 
                 self.ball.last_kicker.team == closest_player.team and 
@@ -641,7 +650,7 @@ class FootballEnv(gym.Env):
             player.cooldown = 5  # brief cooldown after kicking
             
             if is_forward:
-                self._check_offside_on_kick(kicker=player)
+                self._check_offside_on_kick(kicker=player, direction=direction)
                 if self.game_state != GameState.PLAYING:
                     return
 
@@ -834,7 +843,7 @@ class FootballEnv(gym.Env):
             self.ball.owner = None
             return
 
-    def _check_offside_on_kick(self, kicker):
+    def _check_offside_on_kick(self, kicker, direction):
         """
         Simplified offside rule:
         A player is offside if they are in the opponent's half and behind
@@ -866,6 +875,14 @@ class FootballEnv(gym.Env):
             in_opp_half = attacker.x > PITCH_WIDTH / 2 if forward_dir == 1 else attacker.x < PITCH_WIDTH / 2
             beyond_line = attacker.x > last_defender_x if forward_dir == 1 else attacker.x < last_defender_x
             ahead_of_ball = attacker.x > kicker.x if forward_dir == 1 else attacker.x < kicker.x
+
+            dx = attacker.x - kicker.x
+            dy = attacker.y - kicker.y
+            dist = math.hypot(dx, dy)
+            if dist > 1e-6:
+                to_att = np.array([dx / dist, dy / dist])
+                if to_att[0] * direction[0] + to_att[1] * direction[1] < 0.5:
+                    continue
 
             if in_opp_half and beyond_line and ahead_of_ball:
                 # Player is offside — award free kick to defending team
