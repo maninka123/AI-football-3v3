@@ -583,13 +583,16 @@ class FootballEnv(gym.Env):
             # 2. Goalkeeper Save Detection
             # If GK picks up a fast-moving ball last kicked by the opponent
             is_shot_on_goal = False
+            # Check if ball is roughly heading for the goal mouth area
+            is_near_goal_height = (GOAL_Y_TOP - 30 <= self.ball.y <= GOAL_Y_BOTTOM + 30)
+            
             if closest_player.team == 0:
-                # Green GK (Left goal): ball moving left (vx < -1) in left third
-                if self.ball.vx < -1.0 and self.ball.x < PITCH_WIDTH * 0.35:
+                # Green GK (Left goal): ball moving left (vx < -1), left third, correct height
+                if self.ball.vx < -1.0 and self.ball.x < PITCH_WIDTH * 0.35 and is_near_goal_height:
                     is_shot_on_goal = True
             else:
-                # Red GK (Right goal): ball moving right (vx > 1) in right third
-                if self.ball.vx > 1.0 and self.ball.x > PITCH_WIDTH * 0.65:
+                # Red GK (Right goal): ball moving right (vx > 1), right third, correct height
+                if self.ball.vx > 1.0 and self.ball.x > PITCH_WIDTH * 0.65 and is_near_goal_height:
                     is_shot_on_goal = True
 
             if (closest_player.is_goalkeeper and self.ball.speed > 3.0 and
@@ -623,6 +626,9 @@ class FootballEnv(gym.Env):
                     if self.ball.x < PITCH_WIDTH * 0.33: # High press
                         turnover_value += 0.3
                     self._event_rewards -= turnover_value
+                
+                # Turnovers break the pass/assist chain
+                self.ball.second_last_touch_team = -1
 
             # Give possession to closest player
             self.ball.owner = closest_player
