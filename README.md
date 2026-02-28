@@ -218,3 +218,14 @@ python play.py [OPTIONS]
 
 > **Tip**: Run with `--render --render_every 50` to watch improvement over time without slowing training too much.
 
+---
+
+## 📈 Live Training Analytics
+When you start training, a live Matplotlib dashboard will pop up, actively tracking **Win Rates**, **Goal Differentials**, and **Accumulated Rewards** over time.
+
+![Training Dashboard](Images/training_plots.png)
+
+***
+
+*"Some people think football is a matter of life and death. I assure you, it's much more serious than that."* – Bill Shankly  
+Let the training begin, and may the best AI win! 🚀🏆
