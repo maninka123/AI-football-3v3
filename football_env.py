@@ -35,6 +35,13 @@ import math
 PITCH_WIDTH = 800
 PITCH_HEIGHT = 500
 PITCH_MARGIN = 40  # margin around the pitch for rendering
+PITCH_DIAGONAL = math.hypot(PITCH_WIDTH, PITCH_HEIGHT)
+PITCH_CORNERS = (
+    (0.0, 0.0),
+    (0.0, float(PITCH_HEIGHT)),
+    (float(PITCH_WIDTH), 0.0),
+    (float(PITCH_WIDTH), float(PITCH_HEIGHT)),
+)
 
 # Goal dimensions
 GOAL_WIDTH = 10  # depth of the goal
@@ -1127,10 +1134,24 @@ class FootballEnv(gym.Env):
             ball_progress = (self.prev_ball_x - self.ball.x) / PITCH_WIDTH
 
         # Dense shaping
-        # small time penalty
+        # Small time penalty so episodes don't drag forever.
         reward -= 0.001
-        # small ball progress (team 0 right, team 1 left)
-        reward += ball_progress * 0.02
+        # Reward forward ball progression enough to matter vs the time penalty.
+        reward += ball_progress * 0.08
+
+        # Encourage outfield players to stay engaged with the ball.
+        outfield_players = own_players[1:]
+        min_outfield_ball_dist = min(
+            p.distance_to(self.ball.x, self.ball.y) for p in outfield_players
+        )
+        reward += (1.0 - (min_outfield_ball_dist / PITCH_DIAGONAL)) * 0.003
+
+        # Encourage winning/retaining outfield possession and recovering the ball.
+        if self.ball.owner is not None and not self.ball.owner.is_goalkeeper:
+            if self.ball.owner.team == own_team_id:
+                reward += 0.003
+            else:
+                reward -= 0.003
 
         # Goal and Assist rewards
         if own_score > prev_own_score:
@@ -1154,14 +1175,19 @@ class FootballEnv(gym.Env):
                 elif opp_score > own_score:
                     reward -= 10.0
 
-        # Spacing Penalty (Outfield players only to allow GK to stay in goal)
+        # Penalize corner camping when far from the ball.
+        for p in outfield_players:
+            corner_dist = min(math.hypot(p.x - cx, p.y - cy) for cx, cy in PITCH_CORNERS)
+            if corner_dist < 95.0 and p.distance_to(self.ball.x, self.ball.y) > 140.0:
+                reward -= 0.004
+
+        # Light spacing penalty (outfield only) to avoid overlap, but not dominate behavior.
         p1 = own_players[1]
         p2 = own_players[2]
-        
         outfield_spacing = math.hypot(p1.x - p2.x, p1.y - p2.y)
-        
-        if outfield_spacing < 60.0:
-            reward -= 0.01
+
+        if outfield_spacing < 45.0:
+            reward -= 0.0015
 
         return reward
 

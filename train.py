@@ -798,7 +798,9 @@ def train(args):
     print(f"\n💾 Final model saved to: {final_path}")
 
     # Save training state for resume
-    total_timesteps_done = prev_timesteps + model.num_timesteps
+    # With `reset_num_timesteps=False` on resume, SB3 keeps a cumulative counter.
+    # So model.num_timesteps already reflects total progress.
+    total_timesteps_done = int(model.num_timesteps)
     save_training_state(total_timesteps_done, {
         "episodes": reward_callback.episodes,
         "wins": reward_callback.wins,
